@@ -1,0 +1,210 @@
+---
+title: "liblambda-tensors C library reference"
+sidebarTitle: "Lambda Tensors"
+description: "Complete API reference for liblambda-tensors: a 41 KB MIT-licensed C library for structural JSON compression with O(1) random-access field reads."
+---
+
+`liblambda-tensors` is a 41 KB static `.a` and shared `.so` library that compresses families of structurally similar JSON records down to 13.5% of their raw size — while preserving O(1) random-access reads on individual fields. Unlike gzip, which encodes byte patterns, Lambda Tensors encodes the **generative structure** behind your data: it factors out a shared lambda expression and stores only the per-record bindings that vary. Every byte reconstructs exactly — there is no information loss. You can embed it anywhere (MIT licensed), just as you would SQLite.
+
+## How it works
+
+When you have thousands of JSON records that share the same schema and similar values, most of the information is redundant. Lambda Tensors factors that redundancy into three parts:
+
+1. **A generator** — a lambda expression that produces records
+2. **Bindings** — the per-record values that actually differ
+3. **A reconstruction rule** — apply bindings to generator → exact original
+
+The formal connection to lambda calculus is direct:
+
+- **Compression** = λ-abstraction (extract varying parts as parameters)
+- **Decompression** = β-reduction (apply bindings to reconstruct)
+- **Query** = partial application (apply some bindings, leave others symbolic)
+- **Transform** = symbolic reduction (rewrite the expression without decompressing)
+
+## Encoding tiers
+
+Lambda Tensors has five encoding tiers that each build on the last. At N=10,000 records:
+
+| Tier | Method | Size (% of raw) | Description |
+|---|---|---|---|
+| V1 | Varint + zigzag + type bytes | 88% | Basic binary packing |
+| V2 | Small-int, float32 downshift | 64.9% | Type-aware encoding |
+| V2 + Interned | Cross-member string dedup | 29% | Family string table |
+| V2 + Huffman | Canonical Huffman per position | 13.5% | Family-aware probability model |
+| V2 + Arithmetic | Range coding (experimental) | ~11% | Near-entropy bound |
+
+For most production use the Huffman tier gives you the best balance of compression ratio and decode speed.
+
+## gzip vs Lambda Tensors
+
+These tools solve different problems. Choose based on what you need:
+
+| | gzip | Lambda Tensors (Huffman) |
+|---|---|---|
+| Size at N=10,000 | 5.5% of raw | 13.5% of raw |
+| Random access | No — must decompress all | **Yes — O(1) per field** |
+| Query compressed data | No | Yes (partial application) |
+| Schema-aware | No | Yes |
+
+gzip is smaller on raw size. Lambda Tensors is larger but gives you random access: you can read field 7 of record 3,000 without decompressing anything else. For APIs, databases, and structured archives, that is a categorically different capability.
+
+## Build and install
+
+<Steps>
+  <Step title="Enter the library directory">
+    Clone the repo if you haven't already, then move into the library source tree.
+
+    ```bash
+    cd lib/liblambda-tensors
+    ```
+  </Step>
+  <Step title="Build">
+    Running `make` produces both the static archive and the shared object.
+
+    ```bash
+    make                    # builds liblambda-tensors.a + liblambda-tensors.so
+    make test               # runs the test suite
+    ```
+  </Step>
+  <Step title="Install">
+    Copy the header and library files to your prefix. The default prefix is `/usr/local`.
+
+    ```bash
+    make install PREFIX=/usr/local
+    ```
+
+    This installs `liblambda-tensors.a`, `liblambda-tensors.so`, and `lambda_tensors.h` under the specified prefix.
+  </Step>
+  <Step title="Link your application">
+    Add the include path, library path, and link flags to your compiler invocation.
+
+    ```bash
+    cc -o myapp myapp.c -Ipath/to/include -Lpath/to/lib -llambda-tensors -lm
+    ```
+  </Step>
+</Steps>
+
+## Public API
+
+Include the header in your C source:
+
+```c
+#include <lambda_tensors.h>
+```
+
+### `lt_family_create`
+
+```c
+LT_Family *lt_family_create();
+```
+
+Allocates and returns a new, empty family. Returns `NULL` on allocation failure. You must call `lt_family_free` when you are done.
+
+---
+
+### `lt_family_add`
+
+```c
+void lt_family_add(LT_Family *fam, const char *json, size_t len);
+```
+
+Adds a single JSON record to the family. Call this once per record before finalizing. The `json` pointer must remain valid until `lt_family_finalize` returns.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `fam` | `LT_Family *` | Family created by `lt_family_create` |
+| `json` | `const char *` | Pointer to the JSON record bytes |
+| `len` | `size_t` | Byte length of the JSON record |
+
+---
+
+### `lt_family_finalize`
+
+```c
+void lt_family_finalize(LT_Family *fam);
+```
+
+Finalizes the family and builds the full encoding (generator, bindings, string tables, Huffman model). Call this exactly once after all records have been added. After finalization you can read fields but you cannot add more records.
+
+---
+
+### `lt_family_read_field`
+
+```c
+const char *lt_family_read_field(LT_Family *fam, int record_idx, int field_idx);
+```
+
+Returns a pointer to the decoded value of a single field in a single record. This is an O(1) operation — no full decompression occurs. The returned pointer is valid until `lt_family_free` is called.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `fam` | `LT_Family *` | A finalized family |
+| `record_idx` | `int` | Zero-based record index |
+| `field_idx` | `int` | Zero-based field index within that record |
+
+---
+
+### `lt_family_free`
+
+```c
+void lt_family_free(LT_Family *fam);
+```
+
+Frees all memory associated with the family, including any strings returned by `lt_family_read_field`. Do not access the family or any of its field pointers after calling this.
+
+## Usage example
+
+The following example compresses a batch of JSON records and then reads a single field from one of them without a full decompression pass.
+
+```c
+#include <lambda_tensors.h>
+#include <stdio.h>
+
+int main(void) {
+    /* --- 1. Create a family --- */
+    LT_Family *fam = lt_family_create();
+    if (!fam) {
+        fprintf(stderr, "allocation failed\n");
+        return 1;
+    }
+
+    /* --- 2. Add records --- */
+    const char *r1 = "{\"id\":1,\"name\":\"alice\",\"score\":0.91}";
+    const char *r2 = "{\"id\":2,\"name\":\"bob\",\"score\":0.87}";
+    const char *r3 = "{\"id\":3,\"name\":\"carol\",\"score\":0.95}";
+
+    lt_family_add(fam, r1, strlen(r1));
+    lt_family_add(fam, r2, strlen(r2));
+    lt_family_add(fam, r3, strlen(r3));
+
+    /* --- 3. Finalize (builds encoding) --- */
+    lt_family_finalize(fam);
+
+    /* --- 4. Read one field — O(1), no full decompression --- */
+    /* field_idx 1 = "name" in this schema */
+    const char *name = lt_family_read_field(fam, 2, 1);
+    printf("record 2, field 1: %s\n", name);   /* → carol */
+
+    /* --- 5. Free --- */
+    lt_family_free(fam);
+    return 0;
+}
+```
+
+## Best use cases
+
+Lambda Tensors performs best when you have many structurally similar records in the same family:
+
+- **API response caching** — large collections of similar JSON objects
+- **Configuration archives** — versioned configs with shared structure
+- **Transcript and caption bundles** — alignment data with repeated schema
+- **Media metadata families** — tracks, episodes, clips at scale
+- **Any domain with N > 100 structurally homogeneous records**
+
+<Warning>
+Lambda Tensors performs poorly on random binary data, single isolated files, or data that is already compressed. The algorithm exploits structural redundancy across a collection — without that redundancy there is nothing to factor out.
+</Warning>
+
+<Tip>
+The Huffman tier (13.5% of raw) is recommended for production. The Arithmetic tier (~11%) is experimental and may change in future releases.
+</Tip>

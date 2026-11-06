@@ -1,0 +1,55 @@
+---
+title: "bonfyre-api: HTTP gateway for all Bonfyre binaries"
+sidebarTitle: "Overview"
+description: "bonfyre-api is the HTTP gateway that exposes every Bonfyre binary over REST. Start it with one command and reach all endpoints immediately."
+---
+
+`bonfyre-api` is a 69 KB HTTP gateway that exposes the entire Bonfyre binary ecosystem through a single REST interface. You start one process, and every installed `bonfyre-*` binary becomes reachable over HTTP — no additional configuration required. It handles file uploads, background job tracking, binary proxying, and static file serving, all backed by a local SQLite database.
+
+## Starting the server
+
+Run the following command to start `bonfyre-api` on port 9090 and serve a frontend from a local directory:
+
+```bash
+bonfyre-api --port 9090 --static frontend/ serve
+```
+
+If you omit `--port`, the server listens on port 8080 by default.
+
+## Startup flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--port PORT` | `8080` | TCP port the HTTP server listens on |
+| `--static DIR` | _(none)_ | Directory to serve as static files. Falls back to `index.html` for SPA routing when a path is not found |
+| `--db FILE` | `~/.local/share/bonfyre/api.db` | Path to the SQLite database used for job tracking |
+
+## Endpoint surface
+
+Once running, `bonfyre-api` exposes the following routes:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Liveness check — returns service name and version |
+| `GET` | `/api/status` | System-wide counts: jobs, uploads, available binaries |
+| `POST` | `/api/upload` | Upload a file via `multipart/form-data` |
+| `POST` | `/api/jobs` | Submit a background job against any installed binary |
+| `GET` | `/api/jobs` | List all submitted jobs |
+| `GET` | `/api/jobs/:id` | Retrieve detail and output for a single job |
+| `ANY` | `/api/binaries/:name/*` | Proxy any HTTP method directly to the named `bonfyre-*` binary |
+| `GET` | `/*` | Static file serving (when `--static` is set) |
+
+The binary proxy route (`/api/binaries/:name/*`) is the most flexible endpoint. It forks the named binary, pipes the request body to its stdin, and streams its stdout back as the HTTP response. This means any binary that speaks stdin/stdout is immediately available over HTTP without writing additional code.
+
+## CORS
+
+All responses from `bonfyre-api` include CORS headers that allow any origin. This is intentional for local and development use. For production deployments, place `bonfyre-api` behind a reverse proxy (such as nginx or Caddy) and set your desired `Access-Control-Allow-Origin` policy there.
+
+<Note>
+  CORS is open by default. If you expose `bonfyre-api` on a public network, configure origin restrictions at your reverse proxy layer.
+</Note>
+
+## Next steps
+
+- [Full endpoint reference](/reference/api-endpoints) — request parameters, response fields, and curl examples for every route
+- [Authentication](/reference/authentication) — how to obtain a Bearer token and protect your API calls

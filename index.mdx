@@ -1,0 +1,75 @@
+---
+title: "Bonfyre: complete backend platform in 2 MB"
+description: "Bonfyre ships 48 static C11 binaries covering transcription, CMS, search, auth, billing, and compression — no Node.js, no cloud APIs, no runtime dependencies."
+---
+
+Bonfyre is a complete backend platform built from 48 static C11 binaries. Every binary is under 70 KB, starts in under 50 ms, and runs entirely on your machine. Replace Strapi, Deepgram, Pinecone, and your SaaS auth stack with a single 2 MB install — no cloud accounts required.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build all 48 binaries and run your first pipeline in under 5 minutes.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install from source, via the one-line script, or through npm.
+  </Card>
+  <Card title="API Reference" icon="code" href="/reference/api-overview">
+    HTTP endpoints exposed by bonfyre-api for jobs, uploads, and binary proxying.
+  </Card>
+  <Card title="CLI Commands" icon="terminal" href="/reference/cli-commands">
+    Full reference for the unified bonfyre CLI and all subcommands.
+  </Card>
+</CardGroup>
+
+## What you can build
+
+<CardGroup cols={2}>
+  <Card title="Audio Pipeline" icon="microphone" href="/guides/audio-pipeline">
+    Transcribe, clean, summarize, and package audio files entirely offline — 0.999 quality on Whisper base.
+  </Card>
+  <Card title="Lightweight CMS" icon="database" href="/guides/cms">
+    A 299 KB CMS with dynamic schemas, token auth, and structural compression built in.
+  </Card>
+  <Card title="Semantic Search" icon="magnifying-glass" href="/guides/semantic-search">
+    Embed documents locally with ONNX and search by meaning with SIMD cosine similarity.
+  </Card>
+  <Card title="SaaS Backend" icon="building" href="/guides/saas-backend">
+    Auth, billing, API keys, and rate limiting in ~240 KB — no external vendors.
+  </Card>
+</CardGroup>
+
+## Get running in 4 steps
+
+<Steps>
+  <Step title="Install Bonfyre">
+    Clone and build all binaries — requires only a C11 compiler, SQLite3 headers, and zlib.
+    ```bash
+    git clone https://github.com/Nickgonzales76017/bonfyre-oss.git
+    cd bonfyre-oss && make && make install
+    ```
+  </Step>
+  <Step title="Populate the registries">
+    Sync the CLI and populate workflow, recipe, and layer registries after the first build.
+    ```bash
+    bonfyre doctor sync-subcommands
+    bonfyre list --health
+    ```
+  </Step>
+  <Step title="Run your first pipeline">
+    Process an audio file end-to-end — transcript, summary, and ZIP deliverable in 5–8 ms.
+    ```bash
+    bonfyre-pipeline run --input interview.mp3 --out ./output
+    ```
+  </Step>
+  <Step title="Explore what's available">
+    Browse the full binary catalog and check which commands are healthy.
+    ```bash
+    bonfyre list --health
+    bonfyre workflow list
+    bonfyre recipe list
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  All 48 binaries are MIT licensed. Use them in commercial products, embed them in your own tools, or contribute new ones back.
+</Note>

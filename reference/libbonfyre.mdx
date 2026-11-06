@@ -1,0 +1,163 @@
+---
+title: "libbonfyre runtime contract reference"
+sidebarTitle: "libbonfyre"
+description: "Reference for libbonfyre: the shared C runtime defining the BfArtifact contract, operator flags, exactness classes, and utilities used by every Bonfyre binary."
+---
+
+`libbonfyre` is the shared substrate that every Bonfyre binary links against. It defines the universal artifact contract (`BfArtifact`), the operator registry and its behavioral flags, SHA-256 and FNV-1a hashing, and common utilities that used to be duplicated across dozens of binaries. If you are embedding Bonfyre binaries in your own project, building a new binary, or integrating at the C level, this is the reference you need.
+
+The public header is at `lib/libbonfyre/include/bonfyre.h`. The static library is `lib/libbonfyre/libbonfyre.a`. The test suite covers 20 cases: artifact parsing, key computation, SHA-256 vectors, and operator registry invariants.
+
+## The BfArtifact struct
+
+`BfArtifact` is the universal interface. Every binary in the system either produces one, transforms one into another, or serves artifact state over HTTP or CLI. If you understand `BfArtifact`, you understand the whole system.
+
+```c
+typedef struct {
+    char artifact_id[512];     // content-addressed (SHA-256 of canonical form)
+    char artifact_type[128];   // "transcript", "brief", "proof", "offer", etc.
+    char source_system[128];   // originating binary
+    char created_at[128];      // ISO-8601 UTC
+    char root_hash[128];       // SHA-256 of content
+    char family_key[17];       // FNV-1a-64: groups structurally equivalent artifacts
+    char canonical_key[17];    // FNV-1a-64: distinguishes signatures within a family
+    int  atoms_count;          // sub-objects
+    int  operators_count;      // transform nodes
+    int  realizations_count;   // materialized outputs
+    int  component_total;      // atoms + operators + realizations
+} BfArtifact;
+```
+
+### Field descriptions
+
+| Field | Description |
+|---|---|
+| `artifact_id` | SHA-256 of the artifact's canonical form. Content-addressed — the same content always produces the same ID. |
+| `artifact_type` | Human-readable type string. Examples: `"transcript"`, `"brief"`, `"proof"`, `"offer"`. Determines which operators can consume the artifact. |
+| `source_system` | The originating binary (e.g., `"bonfyre-transcribe"`). Combined with `artifact_type` to compute `family_key`. |
+| `created_at` | ISO-8601 UTC timestamp of when the artifact was produced. |
+| `root_hash` | SHA-256 of the artifact's content payload. Used for dedup and cache lookups. |
+| `family_key` | 16-character hex string (FNV-1a-64). Groups artifacts with the same `artifact_type` and `source_system`. The natural unit for Lambda Tensors compression and registry indexing. |
+| `canonical_key` | 16-character hex string (FNV-1a-64). Distinguishes structural signatures within a family — two artifacts in the same family can have different `canonical_key` values if their atom/operator/realization counts differ. |
+| `atoms_count` | Number of sub-objects composing this artifact. |
+| `operators_count` | Number of transform nodes applied in this artifact's lineage. |
+| `realizations_count` | Number of materialized outputs produced from this artifact. |
+| `component_total` | Convenience sum: `atoms_count + operators_count + realizations_count`. |
+
+### Key computation
+
+The two hash keys are computed as follows:
+
+```
+family_key    = FNV-1a-64(normalize(type) + "|" + normalize(system))
+canonical_key = FNV-1a-64(type + "|" + system + "|" + atom_count + "|" + op_count + "|" + real_count)
+```
+
+You should use `bf_artifact_compute_keys` from the library rather than reimplementing this yourself.
+
+## Operator flags
+
+Every binary declares a typed operator descriptor that carries one or more of these flags. The flags express the binary's behavioral contract — they are enforced by the test suite, not just documentation.
+
+| Flag | Meaning |
+|---|---|
+| `BF_OP_PURE` | Stateless: the same inputs always produce the same outputs. No side effects, no mutable state. |
+| `BF_OP_STATEFUL` | Owns mutable state — typically a SQLite database or files on disk. |
+| `BF_OP_CACHEABLE` | Output can be cached and replayed by the tuple `(operator, params, input_hash)`. |
+| `BF_OP_REVERSIBLE` | Output → input reconstruction is possible (lossless in the operational sense). |
+| `BF_OP_IDEMPOTENT` | Running the operator twice produces the same result as running it once. |
+| `BF_OP_STREAMING` | The operator can process data incrementally rather than requiring the full input upfront. |
+
+<Warning>
+A binary is **either** `BF_OP_PURE` **or** `BF_OP_STATEFUL` — never both. This constraint is enforced by the test suite. Declaring both will cause a test failure.
+</Warning>
+
+## Exactness classes
+
+Exactness classes describe the fidelity guarantee an operator makes about its outputs on replay.
+
+| Class | Meaning | Example binaries |
+|---|---|---|
+| `BF_EXACT_BYTE` | Byte-for-byte identical output on every replay given the same inputs. | `bonfyre-hash`, `bonfyre-compress`, `bonfyre-pack` |
+| `BF_EXACT_CANON` | Identical after canonicalization — some formatting may differ, but the canonical form is stable. | `bonfyre-index`, `bonfyre-transcript-clean` |
+| `BF_EXACT_LOSSY` | Output is derived from the input but cannot be perfectly reconstructed. | `bonfyre-transcribe`, `bonfyre-narrate` |
+
+## Common utility functions
+
+These functions replace the `ensure_dir` and `read_file_contents` implementations that were previously duplicated across binaries. Use these instead of rolling your own.
+
+### `bf_ensure_dir`
+
+```c
+int bf_ensure_dir(const char *path);
+```
+
+Creates the directory at `path` (and any missing parents) if it does not already exist. Returns `0` on success, `-1` on failure with `errno` set. Equivalent to `mkdir -p`.
+
+### `bf_read_file`
+
+```c
+char *bf_read_file(const char *path, size_t *out_len);
+```
+
+Reads the entire file at `path` into a heap-allocated buffer. Sets `*out_len` to the number of bytes read. Returns `NULL` on error. The caller is responsible for freeing the returned buffer.
+
+## SHA-256 and FNV-1a
+
+`libbonfyre` provides its own implementations of both hash functions so that binaries with no external dependencies do not need to link against OpenSSL or any other crypto library.
+
+- **SHA-256** — FIPS 180-4 compliant. Used for `artifact_id` and `root_hash` computation.
+- **FNV-1a-64** — Used for `family_key` and `canonical_key` computation, and for O(1) operator registry lookup.
+
+The FNV hash table replaces the original linear scan of the 48-operator registry, giving O(1) lookups.
+
+## Building and linking
+
+```bash
+cd lib/libbonfyre
+make
+make test
+```
+
+To link your own binary against `libbonfyre`:
+
+```bash
+cc -o mybinary mybinary.c \
+  -Ilib/libbonfyre/include \
+  -Llib/libbonfyre \
+  -lbonfyre
+```
+
+<Note>
+`libbonfyre` is primarily intended for developers building new Bonfyre-compatible binaries or embedding existing ones. End users interacting with Bonfyre through the CLI do not need to interact with this library directly.
+</Note>
+
+## Adding a new binary
+
+If you are building a new binary that integrates with the Bonfyre system, follow this checklist:
+
+<Steps>
+  <Step title="Create the source directory">
+    ```bash
+    mkdir -p cmd/BonfyreYourThing/src
+    ```
+  </Step>
+  <Step title="Write main.c and copy a Makefile">
+    Create `cmd/BonfyreYourThing/src/main.c` and copy an existing `Makefile` from another binary as your starting point.
+  </Step>
+  <Step title="Register your operator">
+    Add an operator descriptor to `lib/libbonfyre/src/bf_operators.c`. Declare exactly one of `BF_OP_PURE` or `BF_OP_STATEFUL` — not both.
+  </Step>
+  <Step title="Read and write BfArtifact manifests">
+    All inputs and outputs must flow through `BfArtifact` manifests. Do not invent custom file formats.
+  </Step>
+  <Step title="Implement the required interface">
+    At minimum your binary must implement: `status` subcommand, `--help` flag, `--version` flag.
+  </Step>
+  <Step title="Build and test">
+    ```bash
+    make -C cmd/BonfyreYourThing
+    make test
+    ```
+  </Step>
+</Steps>

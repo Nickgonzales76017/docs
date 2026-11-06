@@ -1,0 +1,247 @@
+---
+title: "Install Bonfyre on macOS and Linux"
+sidebarTitle: "Installation"
+description: "Install Bonfyre from source with make, via a one-line curl script, or through npm. Covers build requirements, make targets, and post-install verification."
+---
+
+Bonfyre builds from a single `make` command and produces 48 static C11 binaries totalling about 2.1 MB. There are three ways to install: building from source (recommended for most users), the one-line curl script for a quick setup, and npm for JavaScript projects. All three methods end with the same `bonfyre` binary on your path.
+
+## Requirements
+
+Before installing, confirm you have the following on your system:
+
+| Requirement | macOS | Linux |
+|---|---|---|
+| C11 compiler (`gcc` or `clang`) | Included with Xcode Command Line Tools | `gcc` or `clang` via your package manager |
+| SQLite3 development headers | `brew install sqlite3` | `apt install libsqlite3-dev` / `dnf install sqlite-devel` |
+| zlib | Included on macOS | `apt install zlib1g-dev` / `dnf install zlib-devel` |
+| `make` | Included with Xcode Command Line Tools | `apt install build-essential` |
+
+To check your dependencies without building anything, run:
+
+```bash
+./install.sh --check
+```
+
+## Install methods
+
+<Tabs>
+
+<Tab title="From source (make)">
+
+Building from source gives you the full binary fleet, both libraries (`liblambda-tensors` and `libbonfyre`), and direct access to every `make` target.
+
+**1. Clone the repository:**
+
+```bash
+git clone https://github.com/Nickgonzales76017/bonfyre-oss.git
+cd bonfyre-oss
+```
+
+**2. Build all binaries:**
+
+```bash
+make
+```
+
+This builds all 48 binaries plus `liblambda-tensors` and `libbonfyre`. Build output streams per-binary status:
+
+```
+  [ 1] BonfyreCMS                    ✓
+  [ 2] BonfyreCLI                    ✓
+  ...
+=== 48/48 built (0 failed) ===
+```
+
+**3. Install to your path:**
+
+```bash
+make install
+```
+
+Binaries are copied to `~/.local/bin` by default. To install system-wide:
+
+```bash
+PREFIX=/usr/local make install
+```
+
+After install, confirm `~/.local/bin` (or your chosen prefix) is in your `PATH`. If it is not, add it to your shell profile:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+</Tab>
+
+<Tab title="One-line curl script">
+
+The install script clones the repository, checks your dependencies, builds all binaries, and installs them to `~/.local/bin` — in a single command.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nickgonzales76017/bonfyre-oss/main/install.sh | sh
+```
+
+The script also downloads the ML models required by the audio pipeline (Whisper base, fastText lid.176, and the all-MiniLM-L6-v2 ONNX model). Total download for models is approximately 290 MB.
+
+**Script options** — if you want more control, clone the repo first and run the script directly:
+
+```bash
+git clone https://github.com/Nickgonzales76017/bonfyre-oss.git
+cd bonfyre-oss
+
+./install.sh                          # build all, install to ~/.local/bin
+./install.sh --prefix /usr/local      # install to /usr/local/bin instead
+./install.sh --check                  # check dependencies only, don't build
+./install.sh --list                   # list all binaries and their layers
+./install.sh --only cms,brief,proof   # build a subset of binaries
+```
+
+<Note>
+  The curl script installs to `~/.local/bin` by default. If that directory is not in your `PATH`, the script will print the export line you need to add to your shell profile.
+</Note>
+
+</Tab>
+
+<Tab title="npm">
+
+npm support provides JavaScript bindings for embedding Bonfyre into Node.js projects. Full bindings are in active development.
+
+```bash
+npm install bonfyre
+```
+
+<Info>
+  The npm package currently provides access to the binary fleet. Full JavaScript bindings are coming soon. For production use today, install from source or via the curl script and call the binaries as subprocesses or through the CLI.
+</Info>
+
+</Tab>
+
+</Tabs>
+
+## Make targets
+
+When building from source, the following `make` targets are available:
+
+| Target | What it does |
+|---|---|
+| `make` | Builds `liblambda-tensors`, `libbonfyre`, and all 48 binaries |
+| `make install` | Copies binaries to `$(PREFIX)/bin` (default: `~/.local`) |
+| `make test` | Runs the library test suites and checks all binaries with `status` |
+| `make clean` | Removes all build artifacts |
+| `make lib` | Builds only the two libraries, without the binaries |
+| `make sanitize` | Rebuilds with AddressSanitizer and UndefinedBehaviorSanitizer |
+| `make models` | Downloads Whisper, fastText, and ONNX models to `~/.bonfyre/models` |
+| `make pgo-gen` | Builds with profiling instrumentation for profile-guided optimization (step 1) |
+| `make pgo-use` | Rebuilds using collected profile data for maximum throughput (step 3) |
+| `make docker` | Builds a Docker image |
+| `make docker-up` | Starts the API and worker via Docker Compose |
+| `make help` | Prints all available targets |
+
+To build and test in a single step:
+
+```bash
+make && make test
+```
+
+## Verify your install
+
+After installing, confirm that the CLI is reachable and the command registry is healthy:
+
+```bash
+bonfyre list --health
+```
+
+A healthy output lists every registered subcommand with a status label. If you see missing or stale entries, populate the registries:
+
+```bash
+bonfyre doctor sync-subcommands
+bonfyre-index layers --root layeros/state
+bonfyre list --health
+```
+
+You can also check specific surfaces:
+
+```bash
+bonfyre workflow list       # registered workflows
+bonfyre recipe list         # saved recipes
+bonfyre wire --help         # wire operator subcommands
+```
+
+<Tip>
+  Run `bonfyre doctor sync-subcommands` any time you pull new code that changes `cmd/` or `lib/`. The CLI subcommand table is not updated automatically on rebuild.
+</Tip>
+
+## After pulling updates
+
+When new code lands in `cmd/`, `lib/`, or CLI/catalog surfaces, rebuild and repopulate:
+
+```bash
+make
+bonfyre doctor sync-subcommands
+bonfyre-index layers --root layeros/state
+bonfyre list --health
+```
+
+For a detailed explanation of the difference between repo-built and installed binaries, and the registry split between `layeros/state` and `~/.local/share/bonfyre/catalog.db`, see the [architecture overview](/concepts/architecture).
+
+## What's installed
+
+After `make install`, your `$PREFIX/bin` directory contains the full binary fleet. Total disk usage is approximately 2.1 MB for all 48 binaries:
+
+<AccordionGroup>
+
+<Accordion title="Infrastructure binaries">
+
+| Binary | Size | Purpose |
+|---|---|---|
+| `bonfyre` | 33 KB | Unified CLI dispatcher |
+| `bonfyre-api` | 69 KB | HTTP gateway, file upload, static server |
+| `bonfyre-auth` | 35 KB | User signup, login, session tokens |
+| `bonfyre-cms` | 299 KB | CMS with Lambda Tensors compression |
+| `bonfyre-graph` | 51 KB | Merkle-DAG artifact graph |
+| `bonfyre-hash` | 34 KB | SHA-256 content addressing |
+| `bonfyre-index` | 68 KB | SQLite artifact index and full-text search |
+| `bonfyre-runtime` | 33 KB | Process lifecycle management |
+| `bonfyre-tel` | 68 KB | Communications edge runtime (SIP, WebTransport, MoQ) |
+
+</Accordion>
+
+<Accordion title="Orchestration binaries">
+
+| Binary | Size | Purpose |
+|---|---|---|
+| `bonfyre-orchestrate` | 45 KB | Machine-only orchestration planner |
+| `bonfyre-pipeline` | 51 KB | Unified in-process pipeline (5–8 ms) |
+| `bonfyre-queue` | 33 KB | Persistent job queue |
+| `bonfyre-stitch` | 33 KB | DAG materializer and result assembly |
+| `bonfyre-sync` | 33 KB | Cross-instance replication |
+
+</Accordion>
+
+<Accordion title="Audio and data pipeline binaries">
+
+| Binary | Size | Purpose |
+|---|---|---|
+| `bonfyre-brief` | 34 KB | Summary and action item extraction |
+| `bonfyre-clips` | 33 KB | Audio clip extraction |
+| `bonfyre-compress` | 33 KB | File compression |
+| `bonfyre-embed` | 34 KB | Text embeddings (ONNX, batch mode) |
+| `bonfyre-emit` | 33 KB | Multi-format output (HTML, PDF, EPUB, RSS) |
+| `bonfyre-ingest` | 33 KB | File intake and manifest generation |
+| `bonfyre-media-prep` | 34 KB | Audio normalization (16 kHz mono) |
+| `bonfyre-narrate` | 68 KB | Verified text-to-speech |
+| `bonfyre-pack` | 33 KB | ZIP deliverable packaging |
+| `bonfyre-paragraph` | 34 KB | Paragraph structure extraction |
+| `bonfyre-proof` | 34 KB | Quality scoring |
+| `bonfyre-tag` | 33 KB | Topic tagging (fastText) |
+| `bonfyre-transcribe` | 34 KB | Speech-to-text (Whisper + HCP) |
+| `bonfyre-transcript-clean` | 34 KB | Filler word and hallucination removal |
+| `bonfyre-vec` | 34 KB | Local vector search (SIMD cosine) |
+
+</Accordion>
+
+</AccordionGroup>
+
+<Note>
+  `liblambda-tensors` (41 KB) and `libbonfyre` are installed as static libraries to `$PREFIX/lib`, with headers to `$PREFIX/include`. Link them with `-llambda-tensors` or `-lbonfyre`.
+</Note>

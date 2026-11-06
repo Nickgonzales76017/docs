@@ -1,0 +1,113 @@
+---
+title: "Complete Bonfyre binary catalog"
+sidebarTitle: "All Binaries"
+description: "Catalog of all 48 Bonfyre binaries by category — infrastructure, orchestration, audio pipeline, and monetization — with binary sizes and one-line purposes."
+---
+
+Bonfyre ships 48 static C11 binaries totaling approximately 2.1 MB on disk. Every binary does one job, starts in under 50 ms, and stays under 70 KB. They compose via pipes and files, and all link against `libbonfyre` for a shared artifact contract. This page is the complete catalog organized by category.
+
+<Note>
+`liblambda-tensors` is a **library** (static `.a` and shared `.so`), not a binary. It does not appear in the binary tables below. See the [Lambda Tensors reference](/reference/lambda-tensors) for its API.
+</Note>
+
+## Common flags
+
+Most binaries accept the following flags regardless of category:
+
+| Flag | Description |
+|---|---|
+| `--help` | Print usage information and exit |
+| `--version` | Print the binary's version string and exit |
+| `status` | Print system information: build flags, operator descriptor, SQLite path (if stateful), and runtime environment |
+
+## Infrastructure
+
+These nine binaries form the cold substrate — content addressing, indexing, HTTP gateway, authentication, and communications edge.
+
+| Binary | Size | Purpose |
+|---|---|---|
+| `bonfyre-cms` | 299 KB | Content management system with dynamic schemas, token auth, and Lambda Tensors compression |
+| `bonfyre-api` | 69 KB | HTTP gateway, file upload, job management, and static file server |
+| `bonfyre-auth` | 35 KB | User signup/login, session tokens, and SHA-256 password hashing |
+| `bonfyre-proxy` | 53 KB | OpenAI-compatible API shim — drop-in replacement for `/v1/audio/transcriptions` and `/v1/chat/completions` |
+| `bonfyre-index` | 68 KB | SQLite artifact index with full-text search |
+| `bonfyre-graph` | 51 KB | Merkle-DAG artifact graph with SHA-256 content addressing |
+| `bonfyre-runtime` | 33 KB | Runtime environment and process lifecycle management |
+| `bonfyre-hash` | 34 KB | Pure C SHA-256 (FIPS 180-4) for content addressing |
+| `bonfyre-tel` | 68 KB | Communications edge runtime: SIP control plane and native WebTransport/MoQ relay |
+
+## Orchestration
+
+These six binaries manage pipeline coordination, scheduling, replication, and the unified CLI surface.
+
+| Binary | Size | Purpose |
+|---|---|---|
+| `bonfyre-pipeline` | 51 KB | Unified in-process pipeline runner — 10 steps in 5–8 ms end-to-end |
+| `bonfyre-orchestrate` | 45 KB | Machine-only orchestration planner with optional Gemma 4 assist |
+| `bonfyre-cli` | 33 KB | Unified command dispatcher — routes `bonfyre <command>` to the right binary |
+| `bonfyre-queue` | 33 KB | Persistent job queue backed by SQLite |
+| `bonfyre-sync` | 33 KB | Cross-instance replication |
+| `bonfyre-stitch` | 33 KB | DAG materializer and result assembly from recipe files |
+
+## Audio pipeline
+
+The largest category — 28 binaries covering every step from file intake through transcription, enrichment, embedding, and distribution.
+
+| Binary | Size | Purpose |
+|---|---|---|
+| `bonfyre-ingest` | 33 KB | File intake, type detection, and `BfArtifact` manifest generation |
+| `bonfyre-media-prep` | 34 KB | Audio normalization to 16 kHz mono with denoising |
+| `bonfyre-transcribe` | 34 KB | Local speech-to-text using Whisper with HCP post-processing |
+| `bonfyre-transcript-family` | 34 KB | Full transcription chain: intake → transcribe in one binary |
+| `bonfyre-transcript-clean` | 34 KB | Remove filler words and detected hallucinations |
+| `bonfyre-paragraph` | 34 KB | Structure flat transcript text into paragraphs |
+| `bonfyre-brief` | 34 KB | Extract executive summary and action items |
+| `bonfyre-narrate` | 68 KB | Verified TTS with inline FFT, 27-feature fingerprint, 6-layer fidelity scoring, and closed-loop verification |
+| `bonfyre-proof` | 34 KB | Quality scoring and review flag generation |
+| `bonfyre-pack` | 33 KB | Deliverable packaging into ZIP with manifest |
+| `bonfyre-compress` | 33 KB | File compression using zstd with async support |
+| `bonfyre-embed` | 34 KB | Text embeddings via ONNX Runtime C API, trie tokenizer, `--insert-db` and `--input-dir` batch mode |
+| `bonfyre-vec` | 34 KB | Local vector search with sqlite-vec, SIMD cosine, `--exact` brute-force, and `compare` |
+| `bonfyre-segment` | 33 KB | Speaker segmentation |
+| `bonfyre-speechloop` | 33 KB | Live speech loop for real-time capture |
+| `bonfyre-clips` | 33 KB | Audio clip extraction from longer recordings |
+| `bonfyre-tone` | 33 KB | Tone and sentiment analysis using openSMILE |
+| `bonfyre-tag` | 33 KB | Topic tagging with native fastText model inference (pure C, no Python) |
+| `bonfyre-canon` | 34 KB | Canonical artifact format normalization using tree-sitter |
+| `bonfyre-query` | 33 KB | Artifact query engine |
+| `bonfyre-repurpose` | 33 KB | Content repurposing across formats |
+| `bonfyre-emit` | 33 KB | Multi-format output via pandoc: HTML, PDF, EPUB, RSS |
+| `bonfyre-render` | 33 KB | Template rendering |
+| `bonfyre-distribute` | 33 KB | Distribution and messaging: email, Slack, webhooks |
+| `bonfyre-project` | 33 KB | Project scaffolding |
+| `bonfyre-mfa-dict` | 34 KB | MFA pronunciation dictionary |
+| `bonfyre-weaviate-index` | 34 KB | Vector index backed by Weaviate for semantic search |
+
+<Info>
+`bonfyre-embed` and `bonfyre-vec` were rewritten from Python subprocess wrappers to pure C. Single-embed latency dropped from ~600 ms (Python) to 237 ms (C + ONNX). Batch embedding of 10 files dropped from ~6,000 ms to 386 ms.
+</Info>
+
+## Monetization
+
+Seven binaries covering pricing, access control, metering, financial records, and payments — each isolated behind its own privilege boundary.
+
+| Binary | Size | Purpose |
+|---|---|---|
+| `bonfyre-offer` | 33 KB | Dynamic pricing and proposal generation |
+| `bonfyre-gate` | 33 KB | API key and tier validation (Free / Pro / Enterprise) |
+| `bonfyre-meter` | 34 KB | Usage tracking and per-operation billing |
+| `bonfyre-ledger` | 33 KB | Append-only financial records |
+| `bonfyre-finance` | 51 KB | Service arbitrage and bundle pricing |
+| `bonfyre-outreach` | 34 KB | Outreach tracking and follow-up routing |
+| `bonfyre-pay` | 35 KB | Invoicing, payments, and credits |
+
+## Layer model summary
+
+Binaries are classified by behavioral contract into four layers. The layer determines what a binary is allowed to import and how it declares its operator flags.
+
+| Layer | Binaries | Contract |
+|---|---|---|
+| **Surface** | cms, api, auth, pipeline, cli, transcript-family, project | Product-facing and stateful. Own mutable state and serve HTTP or complex CLI interfaces. |
+| **Value** | offer, gate, meter, ledger, finance, outreach, pay, pack, distribute | Monetization, metering, and delivery. Separate privilege boundary. |
+| **Transform** | media-prep, transcribe, transcript-clean, paragraph, brief, proof, embed, narrate, render, emit, mfa-dict, weaviate-index | Pure and cacheable. Same inputs always produce the same outputs. |
+| **Substrate** | ingest, hash, index, compress, stitch, graph, runtime, queue, sync | Cold infrastructure. Never import product concepts. |

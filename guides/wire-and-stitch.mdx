@@ -1,0 +1,149 @@
+---
+title: "Observe networks and build pipelines with Wire and Stitch"
+sidebarTitle: "Wire & Stitch"
+description: "Use bonfyre wire to ingest PCAPs, fingerprint devices, and materialize artifacts, then hand off to bonfyre stitch to plan and execute pipelines."
+---
+
+Wire is Bonfyre's network observation surface. It takes a packet capture, fingerprints the devices and flows inside it, produces canonical artifact files, and generates a recipe you can inspect, save, and replay with Stitch. This is the current front door for Bonfyre's observation → classify → materialize → route model: you feed in raw network data and get back structured, replayable pipeline inputs.
+
+## The model
+
+Wire and Stitch implement a four-stage flow:
+
+1. **Observe** — ingest a capture file and index its contents
+2. **Classify** — probe devices to fingerprint them and suggest processing chains
+3. **Materialize** — emit canonical `BfArtifact` JSON files for each relevant entity
+4. **Route** — generate a Stitch-compatible recipe and plan execution
+
+Each stage builds on the previous one. You can stop after any stage to inspect the intermediate state.
+
+## Running the pipeline
+
+<Steps>
+
+<Step title="Ingest a PCAP">
+Start by ingesting your capture file. The `--dumb-device` flag tells Wire to treat unknown devices generically rather than waiting for a fingerprint match.
+
+```bash
+bonfyre wire ingest-pcap capture.pcap --dumb-device --root layeros/state
+```
+
+This indexes the capture under `layeros/state` and prints a `capture_id` you'll use in subsequent steps. Keep it handy.
+
+<Note>
+`layeros/state` is where Wire stores all operating state — the capture index, probed device data, materialized artifacts, and generated recipes. Pass `--root layeros/state` consistently across all Wire commands.
+</Note>
+</Step>
+
+<Step title="Probe devices">
+Run the probe step to fingerprint devices observed in the capture and generate chain suggestions.
+
+```bash
+bonfyre wire probe <capture_id> --root layeros/state
+```
+
+Replace `<capture_id>` with the ID from the previous step. Probe reads the indexed capture, identifies device types and flow patterns, and writes its conclusions back to state. The output is what Stitch uses later to decide which processing blocks to apply.
+</Step>
+
+<Step title="Materialize artifacts">
+Generate canonical `BfArtifact` JSON files for each entity Wire has classified.
+
+```bash
+bonfyre wire artifacts <capture_id> --root layeros/state
+```
+
+Artifacts land under:
+
+```
+layeros/state/wire/artifacts/<capture_id>/
+```
+
+Each file is a self-contained `BfArtifact` — the standard Bonfyre artifact format used by the index, graph, pipeline, and recipe surfaces. You can inspect them directly or pass the directory to other Bonfyre tools.
+</Step>
+
+<Step title="Generate a recipe">
+Produce a Stitch-compatible recipe from the probed and materialized state.
+
+```bash
+bonfyre wire recipe <capture_id> --root layeros/state > recipe.json
+```
+
+The recipe is plain JSON. You can open it, edit it, commit it to version control, and replay it later. It encodes the full observation-to-execution plan that Wire derived from your capture.
+</Step>
+
+<Step title="Plan with Stitch">
+Hand the recipe to Stitch to plan and execute the pipeline.
+
+```bash
+bonfyre stitch plan recipe.json
+```
+
+Stitch reads the recipe, resolves the DAG, and reports what it will execute. From here you can run the plan or inspect it further before committing.
+</Step>
+
+</Steps>
+
+## Checking your environment
+
+Before running the pipeline, verify your Wire surface is healthy:
+
+```bash
+bonfyre wire doctor
+```
+
+This checks that the Wire binary is reachable, its subcommands are registered, and the expected state directories exist.
+
+To check that your registries are populated after a fresh build or update:
+
+```bash
+bonfyre status registries --root layeros/state
+```
+
+<Tip>
+If `bonfyre list --health` shows any commands as unhealthy after pulling new code, rerun `bonfyre doctor sync-subcommands` to re-register updated subcommands into the CLI surface.
+</Tip>
+
+## Using the direct binaries
+
+If you haven't installed the unified CLI, you can run the same steps through the individual binaries built in `cmd/`:
+
+<CodeGroup>
+
+```bash Unified CLI
+bonfyre wire ingest-pcap capture.pcap --dumb-device --root layeros/state
+bonfyre wire probe <capture_id> --root layeros/state
+bonfyre wire artifacts <capture_id> --root layeros/state
+bonfyre wire recipe <capture_id> --root layeros/state > recipe.json
+bonfyre stitch plan recipe.json
+```
+
+```bash Direct binaries
+./cmd/BonfyreWire/bonfyre-wire ingest-pcap capture.pcap --dumb-device --root layeros/state
+./cmd/BonfyreWire/bonfyre-wire probe <capture_id> --root layeros/state
+./cmd/BonfyreWire/bonfyre-wire artifacts <capture_id> --root layeros/state
+./cmd/BonfyreWire/bonfyre-wire recipe <capture_id> --root layeros/state > recipe.json
+./cmd/BonfyreStitch/bonfyre-stitch plan recipe.json
+```
+
+</CodeGroup>
+
+## What you get from each step
+
+| Step | Output |
+|---|---|
+| `ingest-pcap` | Indexed capture registered in `layeros/state`; returns a `capture_id` |
+| `probe` | Device fingerprints and chain suggestions written to state |
+| `artifacts` | `BfArtifact` JSON files under `layeros/state/wire/artifacts/<capture_id>/` |
+| `recipe` | Stitch-compatible recipe JSON printed to stdout (redirect to a file) |
+| `stitch plan` | Resolved execution plan ready to run or inspect |
+
+## State locations
+
+Bonfyre uses two state surfaces that Wire writes into:
+
+- **`layeros/state`** — all Wire operating state: capture index, probe results, artifact files, generated recipes
+- **`~/.local/share/bonfyre/catalog.db`** — the catalog used by workflow, recipe, family, and model browsing surfaces
+
+<Warning>
+If the CLI or registry surfaces look stale after updating code, rebuild with `make` and then rerun `bonfyre doctor sync-subcommands` and `bonfyre-index layers --root layeros/state` to repopulate the command and registry layers.
+</Warning>

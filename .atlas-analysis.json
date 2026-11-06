@@ -1,0 +1,112 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Bonfyre",
+  "projectDescription": "A complete backend platform built from 48 static C11 binaries — covering transcription, CMS, semantic search, compression, auth, billing, and more — that install in under 2 MB with no runtime dependencies.",
+  "theme": "luma",
+  "primaryColor": "#E85D04",
+  "lightColor": "#FFF1E6",
+  "darkColor": "#7C2D12",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/artifacts",
+              "concepts/binaries"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/audio-pipeline",
+              "guides/cms",
+              "guides/semantic-search",
+              "guides/saas-backend",
+              "guides/compression",
+              "guides/wire-and-stitch"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/cli",
+              "configuration/orchestration",
+              "configuration/storage"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "reference/api-overview",
+              "reference/api-endpoints",
+              "reference/authentication"
+            ]
+          },
+          {
+            "group": "Libraries",
+            "pages": [
+              "reference/lambda-tensors",
+              "reference/libbonfyre"
+            ]
+          },
+          {
+            "group": "CLI Commands",
+            "pages": [
+              "reference/cli-commands",
+              "reference/all-binaries"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "48 static C11 binaries — total ~2.1 MB, no Node.js or Python required",
+    "Local audio transcription with HCP v3.2 (0.999 quality on Whisper base)",
+    "Lightweight CMS (299 KB) as a Strapi replacement with Lambda Tensors compression",
+    "Semantic search with local vector embeddings and SIMD cosine similarity",
+    "Complete SaaS backend: auth, billing, API keys, rate limiting in ~240 KB",
+    "liblambda-tensors: structural JSON compression to 13.5% with O(1) random access",
+    "Drop-in OpenAI API proxy for local transcription and chat completions",
+    "Unified pipeline: audio-to-deliverable in 5–8 ms end-to-end",
+    "Optional Gemma 4 orchestration for machine-only pipeline planning",
+    "Network observation pipeline: PCAP → artifacts → stitch-ready recipes"
+  ],
+  "publicApiSurface": [
+    "bonfyre-cms serve --port 8800",
+    "bonfyre-pipeline run --input file.mp3 --out ./output",
+    "bonfyre-transcribe run file.wav --out transcript.json",
+    "bonfyre-embed --text doc.txt --insert-db vectors.db --backend onnx",
+    "bonfyre-vec search vectors.db query.vecf --exact",
+    "bonfyre-api --port 9090 --static frontend/ serve",
+    "bonfyre-auth signup / login / verify",
+    "bonfyre-gate issue --email user@example.com --tier pro",
+    "bonfyre-pay invoice --user-id 1 --period 2026-04",
+    "bonfyre-proxy serve --port 8787",
+    "bonfyre wire ingest-pcap / probe / artifacts / recipe",
+    "bonfyre stitch plan recipe.json",
+    "bonfyre list --health",
+    "bonfyre workflow list / recipe list / layer registry",
+    "bonfyre-orchestrate plan request.json",
+    "GET /api/health, /api/status, /api/jobs, POST /api/upload, /api/jobs",
+    "POST /api/binaries/:name/*",
+    "lt_family_create / lt_family_add / lt_family_finalize / lt_family_read_field"
+  ]
+}

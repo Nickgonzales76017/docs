@@ -1,0 +1,154 @@
+---
+title: "Configure Gemma 4 orchestration"
+sidebarTitle: "Orchestration"
+description: "Set up bonfyre-orchestrate with an optional Gemma 4 endpoint for machine-only boost planning on top of the deterministic Bonfyre baseline."
+---
+
+`bonfyre-orchestrate` is a machine-only planning layer. It is not a chat interface, and it does not expose any prompt surface to you or your users. Bonfyre's deterministic baseline works without it — the orchestrator is an optional boost path that can select higher-leverage Bonfyre operators automatically when a model endpoint is available.
+
+## What orchestration is
+
+Bonfyre runs three planning layers:
+
+1. **Deterministic Bonfyre baseline** — always active, always produces a valid plan
+2. **`bonfyre-orchestrate` heuristic planner** — selects candidate boosters from the operator registry based on request shape
+3. **Optional Gemma 4 delta planner** — refines the booster set when a model endpoint is configured
+
+When no endpoint is configured, `bonfyre-orchestrate` still produces a complete boost plan from Bonfyre's typed operator registry and your request contract. The model is an optional delta on top of that deterministic floor — it cannot replace core operators, only propose additions that must pass a stability gate.
+
+<Note>
+You never write prompts. Gemma 4 operates on Bonfyre's machine ontology: a compressed state vector, the deterministic baseline frontier, and the typed operator registry. There is no freeform text path from your request to the model.
+</Note>
+
+## Environment variables
+
+To enable the Gemma 4 boost path, set these three variables before running `bonfyre-orchestrate`:
+
+```bash
+export BONFYRE_ORCHESTRATE_ENDPOINT=http://127.0.0.1:8000/v1/chat/completions
+export BONFYRE_ORCHESTRATE_MODEL=google/gemma-4-E4B
+export BONFYRE_ORCHESTRATE_API_KEY=...
+```
+
+The endpoint accepts any OpenAI-compatible chat completions API. If you are running Gemma 4 locally, point the endpoint at your local server. If the variables are not set, `bonfyre-orchestrate` falls back to heuristic planning only.
+
+<Tabs>
+  <Tab title="With Gemma 4">
+    Set all three variables. The orchestrator uses Gemma 4 as a bounded delta planner. Proposed boosters are only accepted if they improve the policy score and stay within latency and cost bounds.
+
+    ```bash
+    export BONFYRE_ORCHESTRATE_ENDPOINT=http://127.0.0.1:8000/v1/chat/completions
+    export BONFYRE_ORCHESTRATE_MODEL=google/gemma-4-E4B
+    export BONFYRE_ORCHESTRATE_API_KEY=your_key_here
+    bonfyre-orchestrate plan request.json
+    ```
+  </Tab>
+  <Tab title="Without a model (heuristic only)">
+    Leave the variables unset. The orchestrator produces a valid boost plan from the operator registry and request shape alone.
+
+    ```bash
+    bonfyre-orchestrate plan request.json
+    ```
+  </Tab>
+</Tabs>
+
+## Commands
+
+```bash
+bonfyre-orchestrate status
+bonfyre-orchestrate plan request.json
+bonfyre-orchestrate feedback request.json 0.22 0.08
+bonfyre-orchestrate feedback request.json feedback.json
+```
+
+- `status` — shows the current endpoint configuration and planner state
+- `plan` — runs the planner against a request contract and outputs a plan JSON
+- `feedback` — records post-run quality and latency observations for policy memory
+
+## The request contract
+
+Pass a JSON file to `bonfyre-orchestrate plan` with the following fields:
+
+```json
+{
+  "input_type": "audio",
+  "objective": "publishable-multi-output",
+  "latency_class": "interactive",
+  "surface": "pages+jobs",
+  "artifact_path": "site/demos/input/example"
+}
+```
+
+| Field | Description |
+|---|---|
+| `input_type` | Media type of the input (`audio`, `text`, etc.) |
+| `objective` | What the pipeline should produce |
+| `latency_class` | `interactive` keeps booster sets smaller; `batch` allows wider frontiers |
+| `surface` | Which Bonfyre surfaces the output targets |
+| `artifact_path` | Path to the input artifact |
+
+<Tip>
+Use `bonfyre-orchestrate template audio` to generate a starter request file for audio workloads rather than writing the JSON by hand.
+</Tip>
+
+## Policy memory
+
+The orchestrator maintains a SQLite policy store keyed by `input_type`, `objective`, `latency_class`, and `surface`. When you run the same type of request more than once, Bonfyre reuses the winning booster set from the previous run without calling the model again.
+
+<Steps>
+  <Step title="First run">
+    The orchestrator builds a plan from the heuristic baseline, optionally refined by Gemma 4. The accepted plan is stored in the policy store.
+  </Step>
+  <Step title="Subsequent runs with the same signature">
+    The orchestrator finds an exact match in the policy store and returns the cached booster set. No model call needed.
+  </Step>
+  <Step title="Related workloads">
+    If no exact signature matches, the orchestrator checks for a matching workload-family prior (same `input_type`, `latency_class`, and `surface`). If that also misses, it checks for a matching compressed state key. Only after all cache layers miss does it call Gemma 4.
+  </Step>
+</Steps>
+
+Successful plans also feed back into the deterministic booster ranking as thin priors, so even the heuristic baseline improves over time from accumulated policy memory.
+
+## When Gemma 4 is skipped
+
+Even when an endpoint is configured, the orchestrator skips the model call when:
+
+- Expected information gain is low for the current request
+- The deterministic plan already has high confidence
+- An exact policy signature match is found in cache
+- A proven family or state prior is available
+
+When Gemma 4 is called, its proposed boosters are only accepted if they clear a stability gate: policy score must improve, and latency and cost cannot widen beyond the configured delta bounds.
+
+<Info>
+Plans that accepted Gemma 4 boosters report `"mode": "gemma4-delta"`. Plans served from state or family memory report `"mode": "state-memory"` or `"mode": "family-memory"`. This is visible in the plan JSON output.
+</Info>
+
+## Recording feedback
+
+After a pipeline run completes, you can record the observed outcome to improve future plans:
+
+```bash
+# Simple quality/latency feedback
+bonfyre-orchestrate feedback request.json 0.22 0.08
+
+# Typed domain feedback
+bonfyre-orchestrate feedback request.json feedback.json
+```
+
+The `feedback.json` format lets you provide per-domain observations when you have them:
+
+```json
+{
+  "quality_gain": 0.21,
+  "latency_delta": 0.05,
+  "exec": 0.88,
+  "artifact": 0.74,
+  "tensor": 0.93,
+  "cms": 0.62,
+  "retrieval": 0.91,
+  "value": 0.58
+}
+```
+
+The orchestrator stores average quality gain, latency delta, regret, and sample count per policy signature. This forms the evaluation loop for long-run adaptive control.

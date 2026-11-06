@@ -1,0 +1,147 @@
+---
+title: "Run a self-hosted CMS with Bonfyre"
+sidebarTitle: "CMS"
+description: "Stand up a fully-featured content management system in under 50 ms — dynamic schemas, token auth, and automatic compression, all in a 299 KB binary."
+---
+
+`bonfyre-cms` is a 299 KB content management system that replaces Strapi. It gives you a REST API, dynamic schemas, token authentication, and Lambda Tensors compression — all in a single static binary with no Node.js, no npm packages, and no external services required.
+
+## Starting the CMS
+
+To start the server on port 8800:
+
+```bash
+bonfyre-cms serve --port 8800
+```
+
+That's it. The CMS is immediately available at `http://localhost:8800` backed by a SQLite database stored in `~/.local/share/bonfyre/cms.db` by default.
+
+### Available flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--port PORT` | `8800` | HTTP port to listen on |
+| `--data DIR` | `~/.local/share/bonfyre/` | Directory for data files |
+| `--db FILE` | `cms.db` (in data dir) | SQLite database file path |
+| `--gate-key KEY` | — | Enable API key authentication via `bonfyre-gate` |
+
+## Creating schemas
+
+Schemas are defined dynamically via the API — there are no config files to edit. To create a `posts` schema with `title` and `body` fields:
+
+```bash
+curl -X POST http://localhost:8800/api/schemas \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "posts",
+    "fields": [
+      {"name": "title", "type": "string"},
+      {"name": "body",  "type": "text"}
+    ]
+  }'
+```
+
+Once the schema exists, Bonfyre CMS automatically provisions a REST endpoint at `/api/posts`.
+
+## CRUD operations
+
+<CodeGroup>
+
+```bash Create a record
+curl -X POST http://localhost:8800/api/posts \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Hello", "body": "First post"}'
+```
+
+```bash List all records
+curl http://localhost:8800/api/posts
+```
+
+```bash Get a single record
+curl http://localhost:8800/api/posts/1
+```
+
+</CodeGroup>
+
+The URL pattern `/api/:collection` mirrors Strapi's REST surface intentionally, which makes migration straightforward.
+
+## Authentication with bonfyre-gate
+
+To require API key authentication on every request, start the CMS with a gate key:
+
+```bash
+bonfyre-cms serve --port 8800 --gate-key YOUR_KEY
+```
+
+All API requests must then include an `Authorization` header:
+
+```bash
+curl http://localhost:8800/api/posts \
+  -H "Authorization: Bearer YOUR_KEY"
+```
+
+<Note>
+  `bonfyre-gate` supports tiered access (Free / Pro / Enterprise). See the [SaaS Backend guide](/guides/saas-backend) for how to wire authentication, key provisioning, and tier enforcement together into a complete access control layer.
+</Note>
+
+## Lambda Tensors compression
+
+As records accumulate in a content type, `bonfyre-cms` automatically groups them into families and applies Lambda Tensors compression. You don't configure anything — compression happens in the background.
+
+The practical effects for you are:
+
+- **Storage shrinks as data grows.** Lambda Tensors reaches 13.5% of raw JSON size at scale, compared to 5.5% for gzip — but unlike gzip it preserves random access.
+- **Individual fields are readable without full decompression.** A single field from record 3,000 can be read in one O(1) lookup, which keeps query latency predictable even on large datasets.
+- **Queries operate on compressed data.** Projections and filters run without an intermediate decompression step.
+
+<Tip>
+  At 10,000 structured records, Lambda Tensors typically reaches **13.5% of raw JSON size** — smaller than gzip, with O(1) per-field random access that gzip cannot offer.
+</Tip>
+
+## Performance at a glance
+
+These numbers were measured on Apple M-series hardware:
+
+| Operation | Throughput |
+|---|---|
+| Create | 921 μs/op |
+| Update | 155 μs/op |
+| Reconstruct (Lambda Tensors) | 89 μs/op |
+| ANN k-NN query (N=10,000) | 1.13 ms |
+| Memory at idle | **15 MB** |
+
+## Bonfyre CMS vs. Strapi
+
+| | Strapi | Bonfyre CMS |
+|---|---|---|
+| Install size | ~500 MB | **299 KB** |
+| Dependencies | Node.js + 400+ npm packages | libc + SQLite |
+| Startup time | 30–120 seconds | **< 50 ms** |
+| Memory at idle | ~200 MB | **15 MB** |
+| Compression | — | Lambda Tensors (auto) |
+
+## Migrating from Strapi
+
+If you are moving an existing Strapi project to Bonfyre CMS, the process follows four steps:
+
+<Steps>
+  <Step title="Export your Strapi schemas">
+    Use Strapi's export tooling or query its schema API to get your content types as JSON.
+  </Step>
+
+  <Step title="Re-create schemas in Bonfyre CMS">
+    For each content type, POST to `/api/schemas` using the curl pattern shown in the [Creating schemas](#creating-schemas) section above.
+  </Step>
+
+  <Step title="Export content from Strapi">
+    Use Strapi's REST API (`GET /api/:collection?pagination[pageSize]=1000`) to retrieve your existing records.
+  </Step>
+
+  <Step title="Import content into Bonfyre CMS">
+    POST each record to the matching `/api/:collection` endpoint in Bonfyre CMS. Because the REST surface is intentionally similar to Strapi's `/api/:collection` pattern, you can often adapt an existing export script with minimal changes.
+  </Step>
+</Steps>
+
+<Warning>
+  Strapi supports plugins and lifecycle hooks that Bonfyre CMS does not replicate. Review any custom Strapi plugins before migrating — you may need to reimplement that logic as a separate service or Bonfyre binary.
+</Warning>

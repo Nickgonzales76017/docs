@@ -1,0 +1,153 @@
+---
+title: "Self-host a complete SaaS backend"
+sidebarTitle: "SaaS Backend"
+description: "Wire up authentication, API keys, usage metering, and invoicing as composable static binaries — a full SaaS stack in roughly 240 KB, zero vendors."
+---
+
+Bonfyre gives you every layer of a production SaaS backend as individual static binaries you can run together or independently: an HTTP gateway, user authentication, API key management with tier enforcement, usage metering, and invoicing. The entire stack totals roughly 240 KB — no Node.js runtime, no cloud vendor accounts, and no monthly platform fees.
+
+<Steps>
+  <Step title="Start the HTTP gateway">
+    `bonfyre-api` is your front door — it handles HTTP routing, file uploads, job management, and can serve a static frontend from disk.
+
+    ```bash
+    bonfyre-api --port 9090 --static frontend/ serve &
+    ```
+
+    The API gateway is now listening on port 9090. Any requests to `/api/*` are routed to backend handlers; everything else is served from `frontend/`.
+  </Step>
+
+  <Step title="Set up user authentication">
+    `bonfyre-auth` manages signup, login, and session tokens. Passwords are hashed with SHA-256.
+
+    Register a new user:
+
+    ```bash
+    bonfyre-auth signup \
+      --email user@example.com \
+      --password hunter2
+    ```
+
+    Log in and retrieve a bearer token:
+
+    ```bash
+    bonfyre-auth login \
+      --email user@example.com \
+      --password hunter2
+    ```
+
+    The login command returns a JSON response containing a `token` field. Copy that value — you'll use it in the next steps.
+  </Step>
+
+  <Step title="Provision API keys with bonfyre-gate">
+    `bonfyre-gate` issues API keys and enforces tier limits (Free, Pro, Enterprise). Issue a key for the user you just created:
+
+    ```bash
+    bonfyre-gate issue \
+      --email user@example.com \
+      --tier pro
+    ```
+
+    To validate an incoming key (for example, in a middleware check):
+
+    ```bash
+    bonfyre-gate validate --key API_KEY_HERE
+    ```
+
+    `bonfyre-gate` returns the tier associated with the key, which you can use to gate access to features or enforce rate limits.
+  </Step>
+
+  <Step title="Track usage with bonfyre-meter">
+    `bonfyre-meter` records per-operation usage so you can bill accurately and audit consumption. Every pipeline run is tracked automatically. To view a billing summary at any time:
+
+    ```bash
+    bonfyre-meter report
+    ```
+
+    The report shows per-operation costs, total usage, and a billing summary you can feed directly into invoicing.
+  </Step>
+
+  <Step title="Generate invoices with bonfyre-pay">
+    `bonfyre-pay` creates invoices based on usage data for a given user and billing period:
+
+    ```bash
+    bonfyre-pay invoice \
+      --user-id 1 \
+      --period 2026-04
+    ```
+
+    You can issue credits and manage payment records through the same binary.
+  </Step>
+</Steps>
+
+## Bearer token authentication flow
+
+Once all four services are running, a complete authenticated request flow looks like this:
+
+<Steps>
+  <Step title="Sign up">
+    ```bash
+    curl -X POST http://localhost:9090/api/auth/signup \
+      -H "Content-Type: application/json" \
+      -d '{"email": "user@example.com", "password": "hunter2"}'
+    ```
+  </Step>
+
+  <Step title="Log in and get a token">
+    ```bash
+    curl -X POST http://localhost:9090/api/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"email": "user@example.com", "password": "hunter2"}'
+    # → {"token": "eyJ..."}
+    ```
+  </Step>
+
+  <Step title="Use the token in API requests">
+    ```bash
+    curl http://localhost:9090/api/jobs \
+      -H "Authorization: Bearer eyJ..."
+    ```
+
+    `bonfyre-gate` validates the token and tier on each request. If the tier does not permit the operation, the gateway returns a `403` before the request reaches your handler.
+  </Step>
+</Steps>
+
+## Starting all services together
+
+Here is the full set of commands to bring up a complete SaaS backend in one terminal session:
+
+```bash
+# HTTP gateway + static frontend
+bonfyre-api --port 9090 --static frontend/ serve &
+
+# Submit a pipeline job (example — your users will call this endpoint)
+curl -X POST http://localhost:9090/api/jobs \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{"binary": "bonfyre-pipeline", "args": ["run", "--input", "interview.mp3"]}'
+
+# Check usage after jobs run
+bonfyre-meter report
+
+# Invoice user 1 for the current period
+bonfyre-pay invoice --user-id 1 --period 2026-04
+```
+
+## Stack size vs. typical SaaS infrastructure
+
+| Component | Bonfyre | Typical alternative |
+|---|---|---|
+| HTTP gateway (`bonfyre-api`) | 69 KB | Express + Node.js (~50 MB) |
+| Auth (`bonfyre-auth`) | 35 KB | Auth0 / Supabase Auth (cloud) |
+| API key management (`bonfyre-gate`) | 33 KB | Custom middleware or vendor SDK |
+| Invoicing (`bonfyre-pay`) | 35 KB | Stripe (~vendor dependency) |
+| Usage metering (`bonfyre-meter`) | 34 KB | Segment / Amplitude (cloud) |
+| **Total** | **~240 KB** | **~2,500 MB+ / $2,500+/mo** |
+
+<Info>
+  All binaries share a common runtime library (`libbonfyre`) so utility code like directory management, file reading, and artifact operations is not duplicated across the stack.
+</Info>
+
+<Tip>
+  Combine this stack with `bonfyre-cms` for content management and `bonfyre-pipeline` for audio processing to get a complete product backend — still under 600 KB total across all binaries.
+</Tip>

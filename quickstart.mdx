@@ -1,0 +1,164 @@
+---
+title: "Bonfyre quickstart: build, install, and run your first pipeline"
+sidebarTitle: "Quickstart"
+description: "Build all 48 binaries, populate the CLI and registry surfaces, and run the wire discovery pipeline — from clone to first artifact in under 5 minutes."
+---
+
+Bonfyre's current front door is the wire discovery pipeline: ingest a network capture, fingerprint devices and flows, materialize canonical artifacts, generate a recipe, and stitch it into the execution layer. This walkthrough takes you from a fresh clone to a working pipeline output. The whole sequence takes under 5 minutes.
+
+<Steps>
+
+<Step title="Clone and build">
+
+Clone the repository and run `make`. This builds all 48 binaries, `liblambda-tensors`, and `libbonfyre` — no Node.js, no Python, no Docker required. You need a C11 compiler, SQLite3 headers, and zlib.
+
+```bash
+git clone https://github.com/Nickgonzales76017/bonfyre-oss.git
+cd bonfyre-oss
+make
+```
+
+When the build completes, you'll see a summary like:
+
+```
+=== 48/48 built (0 failed) ===
+```
+
+To put the unified `bonfyre` CLI on your path, run:
+
+```bash
+make install
+```
+
+This copies all binaries to `~/.local/bin` by default. To install to a different prefix, pass `PREFIX`:
+
+```bash
+PREFIX=/usr/local make install
+```
+
+<Tip>
+  Run `./install.sh --check` to verify your build dependencies before building, or `./install.sh --only cms,brief` to build a specific subset of binaries.
+</Tip>
+
+</Step>
+
+<Step title="Populate the CLI and registry surfaces">
+
+Run this once after every fresh clone, and again whenever code under `cmd/`, `lib/`, or the registry surfaces changes. These commands sync the CLI subcommand table, refresh the layer index, and confirm that workflows, recipes, and registries are populated.
+
+```bash
+./cmd/BonfyreCLI/bonfyre doctor sync-subcommands
+./cmd/BonfyreIndex/bonfyre-index layers --root layeros/state
+./cmd/BonfyreCLI/bonfyre list --health
+./cmd/BonfyreWorkflow/bonfyre-workflow list
+./cmd/BonfyreRecipe/bonfyre-recipe list
+./cmd/BonfyreLayer/bonfyre-layer registry --root layeros/state
+```
+
+If you have `bonfyre` installed on your path from `make install`, you can use the shorter unified CLI form instead:
+
+```bash
+bonfyre doctor sync-subcommands
+bonfyre list --health
+bonfyre workflow list
+bonfyre recipe list
+bonfyre layer registry --root layeros/state
+```
+
+Each command confirms a layer of the operator surface. `bonfyre list --health` is the fastest truth-check — it shows whether commands are registered and reachable.
+
+<Note>
+  Bonfyre maintains two state locations: `layeros/state` holds LayerArtifact, graph, queue, and wire operating state; `~/.local/share/bonfyre/catalog.db` holds the smaller catalog used by workflow, recipe, and model browsing surfaces.
+</Note>
+
+</Step>
+
+<Step title="Inspect the BonfyreWire operator">
+
+Before running a pipeline, check the wire operator surface to confirm it's healthy and to see all available subcommands:
+
+```bash
+./cmd/BonfyreWire/bonfyre-wire --help
+./cmd/BonfyreCLI/bonfyre wire doctor
+```
+
+`bonfyre-wire` can ingest PCAP files or synthetic captures, fingerprint devices, materialize canonical artifacts, and generate stitch-ready recipes. All four of those operations are exposed as distinct subcommands: `ingest-pcap`, `probe`, `artifacts`, and `recipe`.
+
+</Step>
+
+<Step title="Run the wire discovery pipeline">
+
+This is the core flow. Each command in the sequence hands its output to the next stage. Replace `capture.pcap` with your own PCAP file, and replace `<capture_id>` with the ID printed by `ingest-pcap`.
+
+**Using repo-local binaries:**
+
+```bash
+./cmd/BonfyreWire/bonfyre-wire ingest-pcap capture.pcap --dumb-device --root layeros/state
+./cmd/BonfyreWire/bonfyre-wire probe <capture_id> --root layeros/state
+./cmd/BonfyreWire/bonfyre-wire artifacts <capture_id> --root layeros/state
+./cmd/BonfyreWire/bonfyre-wire recipe <capture_id> --root layeros/state > recipe.json
+./cmd/BonfyreStitch/bonfyre-stitch plan recipe.json
+```
+
+**Using the installed unified CLI:**
+
+```bash
+bonfyre wire ingest-pcap capture.pcap --dumb-device --root layeros/state
+bonfyre wire probe <capture_id> --root layeros/state
+bonfyre wire artifacts <capture_id> --root layeros/state
+bonfyre wire recipe <capture_id> --root layeros/state > recipe.json
+bonfyre stitch plan recipe.json
+```
+
+Here is what each stage does:
+
+| Stage | Command | Output |
+|---|---|---|
+| Ingest | `ingest-pcap` | Registers the capture and returns a `capture_id` |
+| Probe | `probe` | Fingerprints devices and suggests chain configurations |
+| Artifacts | `artifacts` | Writes canonical `BfArtifact` JSON files to `layeros/state/wire/artifacts/<capture_id>/` |
+| Recipe | `recipe` | Generates a stitch-compatible recipe you can inspect and replay |
+| Stitch | `stitch plan` | Plans the DAG materializer run from the recipe |
+
+<Info>
+  The `--dumb-device` flag tells the ingest stage to treat the capture source as an unclassified device. You can omit it once you have device profile data available.
+</Info>
+
+</Step>
+
+<Step title="Verify with health checks">
+
+After running the pipeline, use these commands to confirm the system state is consistent:
+
+```bash
+# Check overall command surface health
+bonfyre list --health
+
+# Check registry density (how many artifacts, layers, etc. are populated)
+bonfyre status registries --root layeros/state
+
+# Browse available workflows
+bonfyre workflow list
+
+# Browse saved recipes
+bonfyre recipe list
+```
+
+If any command shows as unhealthy or missing after pulling updated code, rerun the registry population commands from step 2. Bonfyre's registries are populated at build time, not at install time — so a fresh `make` followed by `bonfyre doctor sync-subcommands` is always the fix.
+
+<Warning>
+  If `bonfyre list --health` shows stale or missing entries after pulling new code, always rerun `bonfyre doctor sync-subcommands` and `bonfyre-index layers --root layeros/state` before investigating further.
+</Warning>
+
+</Step>
+
+</Steps>
+
+## Next steps
+
+With the wire discovery pipeline working, here are the highest-value places to go next:
+
+- **[Wire and stitch guide](/guides/wire-and-stitch)** — deeper coverage of artifact schemas, recipe format, and how to replay and modify pipeline runs
+- **[Audio pipeline guide](/guides/audio-pipeline)** — transcribe, clean, summarize, and package audio files end-to-end
+- **[Architecture overview](/concepts/architecture)** — how the binary fleet, registries, and layer model fit together
+- **[All binaries reference](/reference/all-binaries)** — the full list of 48 binaries, their sizes, and what each one does

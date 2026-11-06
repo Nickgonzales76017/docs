@@ -1,0 +1,128 @@
+---
+title: "Bonfyre architecture: five layers, one artifact contract"
+sidebarTitle: "Architecture"
+description: "Bonfyre organizes its 48 binaries into five layers. Understanding the layers helps you predict how binaries behave and how to compose them."
+---
+
+Bonfyre is built around a single idea: every binary does exactly one job, declares what kind of job it is, and speaks a common language — the `BfArtifact` manifest. The five-layer model tells you, at a glance, whether a binary owns state, touches money, or is safe to cache and re-run freely. Once you internalize the layers, the whole system becomes predictable.
+
+## The five layers
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  SURFACE — product-facing, stateful services                     │
+│  cms · api · auth · pipeline · cli · transcript-family · project │
+├──────────────────────────────────────────────────────────────────┤
+│  VALUE — monetization, metering, delivery                        │
+│  offer · gate · meter · ledger · finance · outreach · pay        │
+│  pack · distribute                                               │
+├──────────────────────────────────────────────────────────────────┤
+│  TRANSFORM — pure, cacheable, stateless                          │
+│  media-prep · transcribe · transcript-clean · paragraph · brief  │
+│  proof · embed · narrate · render · emit · mfa-dict              │
+│  weaviate-index                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│  SUBSTRATE — cold, formal, stable infrastructure                 │
+│  ingest · hash · index · compress · stitch · graph               │
+│  runtime · queue · sync                                          │
+├──────────────────────────────────────────────────────────────────┤
+│  LIBRARIES                                                       │
+│  libbonfyre (runtime contract, operators, SHA-256, utilities)    │
+│  liblambda-tensors (structural family compression)               │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+<CardGroup cols={2}>
+  <Card title="SURFACE" icon="globe">
+    Stateful, product-facing services. These binaries own mutable state (SQLite databases), serve HTTP APIs, and present complex CLI interfaces. Examples: `bonfyre-cms`, `bonfyre-api`, `bonfyre-auth`.
+  </Card>
+  <Card title="VALUE" icon="dollar-sign">
+    Everything touching money, metering, or delivery. These binaries run in a separate privilege boundary from the rest of the system. Examples: `bonfyre-offer`, `bonfyre-gate`, `bonfyre-pay`.
+  </Card>
+  <Card title="TRANSFORM" icon="arrows-repeat">
+    Pure, stateless operators. The same inputs always produce the same outputs. You can cache their results by `(operator, params, input_hash)` — re-running them costs nothing extra. Examples: `bonfyre-transcribe`, `bonfyre-brief`, `bonfyre-proof`.
+  </Card>
+  <Card title="SUBSTRATE" icon="server">
+    Cold infrastructure that knows nothing about products or money. These binaries are the stable foundation everything else builds on. Examples: `bonfyre-ingest`, `bonfyre-hash`, `bonfyre-index`.
+  </Card>
+</CardGroup>
+
+<Note>
+  Every binary is **either** pure (TRANSFORM / SUBSTRATE) **or** stateful (SURFACE / VALUE). Never both. This constraint is enforced by the test suite, so you can always trust a binary's declared class.
+</Note>
+
+## What each layer means for you
+
+<Steps>
+  <Step title="SUBSTRATE — stable building blocks">
+    Substrate binaries handle intake, hashing, indexing, compression, and routing. They never import concepts from higher layers, so they behave the same no matter what you're building on top of them. You can rely on `bonfyre-ingest` or `bonfyre-hash` to work identically whether you're running the audio pipeline or a custom workflow.
+  </Step>
+  <Step title="TRANSFORM — safe to parallelize and cache">
+    Transform binaries are pure functions. You can run them in parallel, cache their outputs, replay them on the same input a thousand times, and always get the same result. When you use `bonfyre-pipeline`, it exploits this property to complete a 10-step audio-to-invoice chain in 5–8 ms.
+  </Step>
+  <Step title="VALUE — isolated money handling">
+    Value binaries are separated from product logic so billing, metering, and delivery don't leak into your core pipeline. If you only need transcription, you can use Transform and Substrate binaries without ever touching Value.
+  </Step>
+  <Step title="SURFACE — the user-visible layer">
+    Surface binaries own state, serve HTTP, and present CLI interfaces. `bonfyre-api` is your HTTP gateway. `bonfyre-cms` is your content store. These are the entry points for end users and external integrations.
+  </Step>
+</Steps>
+
+## The composable binary philosophy
+
+Each binary has one job. You can wire them together using pipes and files, or you can skip that entirely and use `bonfyre-pipeline` to run all 10 audio-processing steps in a single in-process call.
+
+<Tabs>
+  <Tab title="Composing binaries">
+    ```bash
+    # Each binary reads stdin/files and writes a BfArtifact manifest
+    bonfyre-ingest audio.mp3 \
+      | bonfyre-media-prep \
+      | bonfyre-hash \
+      | bonfyre-transcribe \
+      | bonfyre-brief \
+      | bonfyre-pack --out ./output
+    ```
+  </Tab>
+  <Tab title="Unified pipeline">
+    ```bash
+    # All 10 steps in one process — 5–8 ms end-to-end
+    bonfyre-pipeline run --input interview.mp3 --out ./output
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+  Use individual binaries when you want to inspect intermediate outputs or swap in a custom step. Use `bonfyre-pipeline` when you want maximum throughput with no configuration overhead.
+</Tip>
+
+## Operator behavior flags
+
+Every binary registers an operator descriptor in `libbonfyre` that declares exactly how it behaves. You can use these flags to understand what guarantees a binary offers.
+
+| Flag | What it means for you |
+|---|---|
+| `BF_OP_PURE` | Same inputs always produce the same output. Safe to cache. |
+| `BF_OP_STATEFUL` | Owns mutable state. Do not expect idempotency by default. |
+| `BF_OP_CACHEABLE` | Output is keyed by `(operator, params, input_hash)` — Bonfyre can skip re-running it. |
+| `BF_OP_REVERSIBLE` | You can reconstruct the input from the output. |
+| `BF_OP_IDEMPOTENT` | Running it twice is identical to running it once. |
+| `BF_OP_STREAMING` | Can process data incrementally without loading everything into memory. |
+
+## Where your data lives
+
+All persistent state is stored under `~/.local/share/bonfyre/` by default. Because every stateful binary uses SQLite, a complete backup is a single folder copy.
+
+```bash
+~/.local/share/bonfyre/
+├── cms.db       # CMS schemas, content, tokens
+├── jobs.db      # API job tracking
+├── meter.db     # Usage metering
+├── index.db     # Artifact index
+├── uploads/     # Uploaded files
+└── artifacts/   # Pipeline outputs
+```
+
+<Info>
+  You can move this folder or point binaries at a different path. There is no cloud sync, no remote state, and no external dependency unless you explicitly configure one (such as a Weaviate instance for vector search).
+</Info>

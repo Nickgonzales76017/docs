@@ -1,0 +1,87 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Bonfyre",
+  "theme": "luma",
+  "colors": {
+    "primary": "#E85D04",
+    "light": "#FFF1E6",
+    "dark": "#7C2D12"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Nickgonzales76017/bonfyre-oss"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "index",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/artifacts",
+              "concepts/binaries"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/audio-pipeline",
+              "guides/cms",
+              "guides/semantic-search",
+              "guides/saas-backend",
+              "guides/compression",
+              "guides/wire-and-stitch"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/cli",
+              "configuration/orchestration",
+              "configuration/storage"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "reference/api-overview",
+              "reference/api-endpoints",
+              "reference/authentication"
+            ]
+          },
+          {
+            "group": "Libraries",
+            "pages": [
+              "reference/lambda-tensors",
+              "reference/libbonfyre"
+            ]
+          },
+          {
+            "group": "CLI Commands",
+            "pages": [
+              "reference/cli-commands",
+              "reference/all-binaries"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

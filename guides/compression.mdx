@@ -1,0 +1,118 @@
+---
+title: "Compress structured JSON records with Lambda Tensors"
+sidebarTitle: "Compression"
+description: "Use Lambda Tensors to structurally compress families of similar JSON records and read any field in O(1) time — no full decompression required."
+---
+
+Lambda Tensors is Bonfyre's built-in structural compression library for JSON. Unlike general-purpose byte compressors, it understands the shape of your data and lets you read individual fields from compressed records without decompressing anything else. If you work with large collections of similar JSON objects — API responses, config archives, transcript bundles, media metadata — this is the tool for that job.
+
+## How it works
+
+When you have thousands of JSON records that share the same schema and similar values, most of the content is redundant. Lambda Tensors factors that redundancy into three parts:
+
+- **A generator** — a lambda expression that captures the shared structure of the family
+- **Bindings** — the per-record values that actually differ
+- **A reconstruction rule** — apply bindings to the generator to reproduce any record exactly
+
+No data is lost. Every byte reconstructs exactly.
+
+The practical consequence is that you can ask for field 7 of record 3,000 and the library returns it directly — it only needs to apply that record's bindings for that field position. You never pay to decompress the other 9,999 records.
+
+## Why not just use gzip?
+
+Both gzip and Lambda Tensors reduce size, but they make different trade-offs:
+
+| | gzip | Lambda Tensors (Huffman) |
+|---|---|---|
+| Size at N=10,000 records | 5.5% of raw | 13.5% of raw |
+| Random field access | No — must decompress everything | **Yes — O(1) per field** |
+| Query without decompressing | No | Yes (partial application) |
+| Schema-aware | No | Yes |
+
+gzip produces smaller files. Lambda Tensors produces slightly larger files but gives you random access. For structured data that you need to query — caches, databases, archives — that distinction matters more than raw size.
+
+## Encoding tiers
+
+Lambda Tensors has five encoding tiers, each building on the one before it. You can choose based on your size/complexity trade-off:
+
+| Tier | Method | Size at N=10K | Notes |
+|---|---|---|---|
+| V1 | Varint + zigzag + type bytes | 88% of raw | Baseline binary packing |
+| V2 | Small-int, float32 downshift | 64.9% of raw | Type-aware encoding |
+| V2 + Interned | Cross-member string dedup | 29% of raw | Family-level string table |
+| V2 + Huffman | Canonical Huffman per position | **13.5% of raw** | Family-aware probability model |
+| V2 + Arithmetic | Range coding (experimental) | ~11% of raw | Near-entropy bound |
+
+The **V2 + Huffman** tier is the recommended default. It reaches 13.5% of raw JSON with full O(1) random access — the numbers you'll see cited in benchmarks.
+
+## Using the C library
+
+The library ships as `liblambda-tensors` — a 41 KB static archive (`.a`) and shared object (`.so`) with a single header.
+
+### Build and install
+
+```bash
+cd lib/liblambda-tensors
+make            # builds liblambda-tensors.a and liblambda-tensors.so
+make test       # runs the test suite
+make install    # copies to PREFIX/lib and PREFIX/include
+```
+
+### Link your application
+
+```bash
+cc -o myapp myapp.c -llambda-tensors -lm
+```
+
+If you installed to a non-standard prefix, add the paths explicitly:
+
+```bash
+cc -o myapp myapp.c -Ipath/to/include -Lpath/to/lib -llambda-tensors -lm
+```
+
+### Compress and read a family
+
+```c
+#include <lambda_tensors.h>
+
+// Create a family and add records
+LT_Family *fam = lt_family_create();
+lt_family_add(fam, json_str_1, len_1);
+lt_family_add(fam, json_str_2, len_2);
+// ... add as many records as you have
+lt_family_finalize(fam);
+
+// Read a single field from any record — without decompressing anything else
+const char *val = lt_family_read_field(fam, record_idx, field_idx);
+
+lt_family_free(fam);
+```
+
+`lt_family_finalize` is what triggers the actual compression and builds the probability model. After that, `lt_family_read_field` gives you O(1) access to any field in any record.
+
+## Best use cases
+
+Lambda Tensors works best when you have many structurally similar records:
+
+- **API response caching** — store thousands of similar JSON objects at a fraction of the size, and serve individual fields without cache deserialization overhead
+- **Configuration archives** — versioned configs that share most of their structure
+- **Transcript and caption bundles** — alignment data with repeated schema across segments
+- **Media metadata families** — large catalogs of track, episode, or asset metadata
+
+<Note>
+Lambda Tensors works poorly on random binary data, single isolated files, or already-compressed content. The compression gains come from structural redundancy across a family — you need at least a few hundred similar records to see meaningful gains.
+</Note>
+
+## Performance reference
+
+| Method | Size | Random access |
+|---|---|---|
+| Raw JSON | 100% | Yes |
+| gzip | 5.5% | No |
+| **Lambda Tensors (Huffman)** | **13.5%** | **Yes — O(1)** |
+
+CMS reconstruction benchmark on Apple M-series: **89 μs per record** at N=10,000.
+
+<Tip>
+Lambda Tensors is MIT licensed. You can embed it directly in your application or library — it has no external dependencies beyond `libc` and `libm`.
+</Tip>

@@ -1,0 +1,179 @@
+---
+title: "Bonfyre CLI setup: registries, health checks, and sync"
+sidebarTitle: "CLI Setup"
+description: "Populate registries, verify command health, and keep your Bonfyre CLI in sync after installation or when pulling updated code that changes binaries."
+---
+
+After running `make install`, the Bonfyre CLI is on your path, but the command and registry surfaces need one additional population step before everything reports correctly. This page covers how to bring those surfaces up to date, what healthy output looks like, and what to do when things appear stale.
+
+## Install path
+
+`make install` copies all binaries to `~/.local/bin`. If you want a system-wide install, pass a custom prefix:
+
+<CodeGroup>
+```bash Default (~/.local/bin)
+make install
+```
+
+```bash System-wide (/usr/local/bin)
+PREFIX=/usr/local make install
+```
+</CodeGroup>
+
+Make sure `~/.local/bin` is on your `PATH` before continuing. If `bonfyre --version` returns "command not found", add it:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+## Populate the command and registry surfaces
+
+Run the following sequence once after a fresh install, and again whenever you pull new code that touches `cmd/` or `lib/`:
+
+```bash
+bonfyre doctor sync-subcommands
+bonfyre-index layers --root layeros/state
+bonfyre list --health
+bonfyre workflow list
+bonfyre recipe list
+bonfyre layer registry --root layeros/state
+```
+
+Here is what each command does:
+
+| Command | What it does |
+|---|---|
+| `bonfyre doctor sync-subcommands` | Syncs repo-built subcommands into `~/.local/bin` |
+| `bonfyre-index layers --root layeros/state` | Refreshes the layer index projection in `layeros/state` |
+| `bonfyre list --health` | Shows command health labels across the full operator surface |
+| `bonfyre workflow list` | Confirms workflow registry is populated |
+| `bonfyre recipe list` | Confirms recipe registry is populated |
+| `bonfyre layer registry --root layeros/state` | Confirms layer registry is populated |
+
+<Note>
+If you are validating a fresh build before installing, use the direct binary paths instead of the `bonfyre` dispatcher. For example: `./cmd/BonfyreCLI/bonfyre doctor sync-subcommands`.
+</Note>
+
+## Health checks
+
+`bonfyre list --health` is your first stop for verifying the command surface. It adds status labels alongside each registered command:
+
+```bash
+bonfyre list --health
+bonfyre list --compact --health
+bonfyre list --json --health
+```
+
+### Health label meanings
+
+| Label | Meaning |
+|---|---|
+| `ready` | The dispatcher found a runnable binary path for this command |
+| `healthy` | The binary responded to a lightweight `status` or `--help` probe |
+| `repo` | The active binary is a repo-built binary under `cmd/...` |
+| `installed` | The active binary is an installed binary, usually under `~/.local/bin` |
+| `stale` | The installed binary differs from the repo-built binary for the same command name |
+
+A healthy command shows both `ready` and `healthy`. A `stale` label means the installed binary is out of date relative to what is in the repo — re-running the registry population sequence fixes this.
+
+### What healthy looks like
+
+When the surface is fully populated, `bonfyre list --health` shows all commands as `ready` and `healthy`, with no `stale` entries. Workflow, recipe, and layer registries all return non-empty lists.
+
+### What unhealthy looks like
+
+- Commands missing from `bonfyre list` — `sync-subcommands` has not been run yet
+- `stale` labels — installed binaries are behind the repo; re-run `bonfyre doctor sync-subcommands`
+- Empty workflow or recipe lists — `bonfyre-index layers` or the registry commands have not been run
+
+## Two state surfaces
+
+Bonfyre uses two separate state locations. They are related but not the same inventory:
+
+<Tabs>
+  <Tab title="layeros/state">
+    Located at `layeros/state` inside the repo directory.
+
+    This is the larger operating state surface. It contains:
+    - `layers.db` — layer artifact state
+    - `index.db` — artifact index
+    - `graph.db` — Merkle-DAG graph
+    - `queue.db` — persistent job queue
+
+    Use `--root layeros/state` with commands like `bonfyre-index`, `bonfyre layer registry`, and `bonfyre status registries`.
+  </Tab>
+  <Tab title="~/.local/share/bonfyre/catalog.db">
+    Located at `~/.local/share/bonfyre/catalog.db` in your home directory.
+
+    This is the smaller home catalog used by the workflow, recipe, family, and model browsing surfaces. It is populated when you run `bonfyre workflow list`, `bonfyre recipe list`, and related commands.
+  </Tab>
+</Tabs>
+
+<Info>
+When you run `bonfyre` from inside the Bonfyre repo, the dispatcher prefers repo-built binaries where possible. This reduces drift between what is installed and what is in your working tree.
+</Info>
+
+## Inspecting registry density and drift
+
+To get a detailed view of registry density:
+
+```bash
+bonfyre status registries --root layeros/state
+bonfyre status registries --root layeros/state --json
+```
+
+To check for drift between repo-built and installed binaries:
+
+```bash
+bonfyre status commands
+bonfyre status commands --json
+```
+
+To write a deep operational snapshot:
+
+```bash
+bonfyre status snapshot --root layeros/state --out /tmp/bonfyre_ops_deep
+```
+
+To preview what `sync-subcommands` would change without making changes:
+
+```bash
+bonfyre doctor sync-subcommands --dry-run
+```
+
+## When to re-run registry population
+
+Re-run the full sequence whenever:
+
+- You pull new code that touches `cmd/` or `lib/`
+- You rebuild binaries with `make`
+- You see `stale` labels in `bonfyre list --health`
+- CLI commands appear missing or return errors after an update
+
+## Troubleshooting
+
+<Warning>
+If the CLI looks stale after pulling and rebuilding, the most common cause is that the registry population sequence has not been re-run. Run `bonfyre doctor sync-subcommands` followed by the full sequence above.
+</Warning>
+
+**Symptom: `bonfyre workflow list` returns an empty list**
+
+The workflow registry has not been populated yet. Run:
+
+```bash
+bonfyre-index layers --root layeros/state
+bonfyre workflow list
+```
+
+**Symptom: commands show as `stale`**
+
+The installed binary is out of date. Rebuild and sync:
+
+```bash
+make
+bonfyre doctor sync-subcommands
+```
+
+**Symptom: `bonfyre list --health` shows commands as not `healthy`**
+
+The binary exists but did not respond to a probe. Check that the binary is executable and that any required runtime dependencies (e.g., Whisper model files) are present.

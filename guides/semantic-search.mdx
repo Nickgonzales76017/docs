@@ -1,0 +1,106 @@
+---
+title: "Build local semantic search with Bonfyre"
+sidebarTitle: "Semantic Search"
+description: "Embed documents, store vectors locally, and run meaning-based search with 5 ms queries — no Pinecone account, no cloud costs, no data leaving your machine."
+---
+
+Bonfyre's embedding and vector search tools let you build semantic search entirely on your own hardware. You embed text documents into dense float vectors, store them in a local SQLite database, and query by meaning rather than keyword. The entire stack — ONNX-based BERT embeddings, SIMD-accelerated cosine similarity, and the vector database — runs as two small static binaries with no Python required.
+
+## Embed a single document
+
+To embed one text file and insert the vector directly into a local database:
+
+```bash
+bonfyre-embed --text doc.txt --insert-db vectors.db --backend onnx
+```
+
+The `--insert-db` flag embeds and inserts in a single process — no intermediate file is written to disk, and no separate insert command is needed. The database file is created automatically if it doesn't exist.
+
+## Batch embed a directory
+
+To embed an entire directory of `.txt` files in one pass:
+
+```bash
+bonfyre-embed --input-dir corpus/ --insert-db vectors.db --backend onnx
+```
+
+With `--input-dir`, the ONNX session loads once and a single SQLite connection is held open for all inserts. At 10 files this runs in **386 ms** total — compared to ~6,000 ms if you ran each file in a separate Python process.
+
+<Tip>
+  You can omit `--out` entirely when using `--insert-db`. The embed-write-read-insert round-trip is eliminated, which makes batch pipelines significantly faster.
+</Tip>
+
+## Search by meaning
+
+To search the database with a query vector stored in a `.vecf` file:
+
+```bash
+bonfyre-vec search vectors.db query.vecf --exact
+```
+
+The `--exact` flag uses SIMD cosine similarity to brute-force search all vectors, bypassing the approximate nearest-neighbor (ANN) index. For collections under a few thousand documents, exact search is both faster and more accurate than ANN approximation.
+
+To generate a query vector from a text string first:
+
+```bash
+bonfyre-embed --text query.txt --out query.vecf --output-format binary
+bonfyre-vec search vectors.db query.vecf --exact
+```
+
+## Compare two documents
+
+To get the cosine similarity between two documents already in the database:
+
+```bash
+bonfyre-vec compare vectors.db doc1 doc2
+```
+
+This is useful for deduplication, clustering, and identifying near-duplicate content.
+
+## The VECF binary format
+
+When you write a vector to a file with `--output-format binary`, Bonfyre uses VECF — a raw float32 format with a small magic header.
+
+```bash
+bonfyre-embed --text input.txt --out embedding.vecf --output-format binary
+```
+
+The size difference is significant:
+
+| Format | Size (384-dim vector) | Parse time |
+|---|---|---|
+| JSON | 6.4 KB | 384 × `strtof()` ≈ 384,000 cycles |
+| **VECF binary** | **1,544 bytes** | `fread()` ≈ **< 1,000 cycles** |
+
+VECF is **4.2× smaller** than JSON and eliminates all parsing overhead — the vector is memory-mapped directly into float32 arrays. `bonfyre-vec search` auto-detects the format, so you don't need to specify it at query time.
+
+## SIMD cosine similarity
+
+`bonfyre-vec` uses NEON SIMD instructions on ARM processors (Apple M-series and ARM Linux) to accelerate cosine similarity calculations, with an automatic scalar fallback on x86. Measured on Apple M-series hardware, exact search over 10 documents runs in **5 ms**.
+
+## Performance summary
+
+| Operation | Time |
+|---|---|
+| Single embed (C + ONNX) | **237 ms** |
+| 10-file batch embed | **386 ms** |
+| 10-file embed + DB insert | **689 ms** |
+| Exact SIMD vector search (10 docs) | **5 ms** |
+
+<Note>
+  Single embed was ~600 ms using the previous Python subprocess approach. The move to the ONNX Runtime C API and a trie-based tokenizer brought it to 237 ms — a 2.5× improvement without changing the model or its output quality.
+</Note>
+
+## Bonfyre vs. Pinecone
+
+| | Pinecone | Bonfyre + bonfyre-vec |
+|---|---|---|
+| Monthly cost | ~$250/mo (starter) | **$0/mo** |
+| Query latency | ~50–200 ms (network) | **5 ms (local)** |
+| Data privacy | Cloud | **100% local** |
+| Setup | API key + SDK | Single static binary |
+| Requires internet | Yes | **No** |
+
+<Info>
+  ONNX multi-threading is enabled by default, using all available CPU cores. On a multi-core machine you will typically see 3–4× inference throughput compared to single-threaded mode.
+</Info>

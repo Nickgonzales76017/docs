@@ -1,0 +1,127 @@
+---
+title: "Authenticate requests to bonfyre-api"
+sidebarTitle: "Authentication"
+description: "Learn how to sign up, log in, and pass a Bearer token to bonfyre-api. Covers token creation, API key provisioning, tier levels, and 401 error fixes."
+---
+
+`bonfyre-api` uses Bearer token authentication. You obtain a token by signing up and logging in through `bonfyre-auth`, then pass that token in the `Authorization` header of every API request. All token handling happens locally — `bonfyre-auth` stores user records in a SQLite database on your machine, SHA-256 hashes passwords, and issues tokens that are validated on each request without any external identity provider.
+
+## Sign up, log in, and make your first call
+
+<Steps>
+  <Step title="Create an account">
+    Run `bonfyre-auth signup` to create a user record. Your password is SHA-256 hashed before it is stored — it is never persisted in plaintext.
+
+    ```bash
+    bonfyre-auth signup --email user@example.com --password yourpassword
+    ```
+
+    On success, `bonfyre-auth` prints a confirmation and the new user ID.
+  </Step>
+
+  <Step title="Log in and get your token">
+    Run `bonfyre-auth login` with the same credentials. The command prints a Bearer token you will use in every subsequent request.
+
+    ```bash
+    bonfyre-auth login --email user@example.com --password yourpassword
+    ```
+
+    The output looks like this:
+
+    ```
+    Token: bfy_abc123def456...
+    ```
+
+    Copy this value. You will pass it as the `Authorization` header.
+  </Step>
+
+  <Step title="Add the token to your requests">
+    Include the token in the `Authorization` header using the `Bearer` scheme:
+
+    ```bash
+    curl http://localhost:9090/api/jobs \
+      -H "Authorization: Bearer bfy_abc123def456..."
+    ```
+
+    Every `bonfyre-api` endpoint that requires authentication validates this token against `bonfyre-auth` before processing your request.
+  </Step>
+</Steps>
+
+## Verify a token
+
+You can check that a token is still valid at any time using `bonfyre-auth verify`:
+
+```bash
+bonfyre-auth verify --token bfy_abc123def456...
+```
+
+A valid token prints the associated user record. An invalid or expired token prints an error message and exits with a non-zero status.
+
+## Full curl example with Authorization header
+
+The following example uploads a file and then submits a job, both with the Authorization header:
+
+```bash
+# Upload a file
+curl -X POST http://localhost:9090/api/upload \
+  -H "Authorization: Bearer bfy_abc123def456..." \
+  -F "file=@interview.mp3"
+
+# Submit a job using the uploaded file
+curl -X POST http://localhost:9090/api/jobs \
+  -H "Authorization: Bearer bfy_abc123def456..." \
+  -H "Content-Type: application/json" \
+  -d '{"binary": "bonfyre-ingest", "args": ["--file", "interview.mp3"]}'
+```
+
+## API key provisioning
+
+For service-to-service access or when you need tiered rate limiting, use `bonfyre-gate` to issue an API key. `bonfyre-gate` keys are separate from `bonfyre-auth` session tokens and carry a tier designation that controls access levels and rate limits.
+
+```bash
+bonfyre-gate issue --email user@example.com --tier pro
+```
+
+### Tier levels
+
+| Tier | Description |
+|---|---|
+| `free` | Default tier. Suitable for development and low-volume use. |
+| `pro` | Elevated rate limits and access to metered billing features via `bonfyre-meter`. |
+| `enterprise` | Full access. Intended for production deployments with `bonfyre-ledger` and `bonfyre-pay` integration. |
+
+<Info>
+  `bonfyre-gate` keys are validated by `bonfyre-gate` itself, not `bonfyre-auth`. If you use both systems, ensure your `bonfyre-api` instance is configured to check the correct validator for your deployment.
+</Info>
+
+## How tokens work
+
+Tokens issued by `bonfyre-auth login` are Bearer tokens derived from your credentials. Your password is hashed with SHA-256 before storage and the resulting token encodes your session identity. Tokens are validated by calling `bonfyre-auth verify` internally on each protected request — there is no shared secret or JWK endpoint required.
+
+<Note>
+  Because everything runs locally, token storage and validation are fully under your control. Back up `~/.local/share/bonfyre/` if you need to persist user accounts across machines.
+</Note>
+
+## Handling 401 responses
+
+If your request is missing a token or the token is invalid, `bonfyre-api` returns a `401 Unauthorized` response:
+
+```json
+{
+  "error": "unauthorized",
+  "message": "missing or invalid Authorization header"
+}
+```
+
+**Common causes and fixes:**
+
+| Cause | Fix |
+|---|---|
+| No `Authorization` header in the request | Add `-H "Authorization: Bearer <token>"` to your curl command |
+| Token typo or truncation | Re-run `bonfyre-auth login` to get a fresh token and copy it exactly |
+| Token for a different server instance | Ensure you are pointing at the same `bonfyre-auth` database the server uses |
+| Expired or revoked token | Run `bonfyre-auth login` again to obtain a new token |
+
+<Warning>
+  If you see 401 errors after reinstalling or moving your Bonfyre data directory, your old tokens are no longer valid. Run `bonfyre-auth login` to get a new token against the current database.
+</Warning>

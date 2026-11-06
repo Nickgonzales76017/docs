@@ -1,0 +1,321 @@
+---
+title: "REST API endpoints for bonfyre-api"
+sidebarTitle: "Endpoints"
+description: "Complete reference for every bonfyre-api route: parameters, response fields, curl examples, and expected JSON for health, jobs, uploads, and binary proxying."
+---
+
+Every route served by `bonfyre-api` is documented here. For each endpoint you will find the request shape, response fields, a curl example you can run directly, and the expected JSON response. All endpoints return `Content-Type: application/json` unless the binary proxy route streams a different content type from the underlying binary. Before making authenticated calls, see the [Authentication](/reference/authentication) page.
+
+---
+
+## GET /api/health
+
+Returns a liveness check confirming the server is running and reports its version. No authentication is required. Use this endpoint to verify that `bonfyre-api` started successfully or to health-check it from a load balancer.
+
+<CodeGroup>
+```bash curl
+curl http://localhost:9090/api/health
+```
+</CodeGroup>
+
+**Response**
+
+```json
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "service": "bonfyre-api"
+}
+```
+
+<ResponseField name="status" type="string">
+  Always `"ok"` when the server is healthy.
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  The running version of `bonfyre-api`.
+</ResponseField>
+
+<ResponseField name="service" type="string">
+  Always `"bonfyre-api"`.
+</ResponseField>
+
+---
+
+## GET /api/status
+
+Returns system-wide counts for jobs, uploads, and the list of available binaries discovered on the host. Use this to inspect the current state of the server without querying individual job records.
+
+<CodeGroup>
+```bash curl
+curl http://localhost:9090/api/status
+```
+</CodeGroup>
+
+**Response**
+
+```json
+{
+  "total_jobs": 42,
+  "completed_jobs": 38,
+  "total_uploads": 15,
+  "available_binaries": 38,
+  "binaries": ["bonfyre-cms", "bonfyre-ingest", "bonfyre-transcribe"]
+}
+```
+
+<ResponseField name="total_jobs" type="integer">
+  Total number of jobs ever submitted to this server instance.
+</ResponseField>
+
+<ResponseField name="completed_jobs" type="integer">
+  Number of jobs that have reached a terminal state (`completed` or `failed`).
+</ResponseField>
+
+<ResponseField name="total_uploads" type="integer">
+  Total number of files uploaded via `POST /api/upload`.
+</ResponseField>
+
+<ResponseField name="available_binaries" type="integer">
+  Count of `bonfyre-*` binaries found on `$PATH`.
+</ResponseField>
+
+<ResponseField name="binaries" type="string[]">
+  Array of binary names available for job submission and direct proxying.
+</ResponseField>
+
+---
+
+## POST /api/upload
+
+Uploads a file to the server using `multipart/form-data`. The file is stored in the uploads directory (default: `~/.local/share/bonfyre/uploads/`) and you can reference its path in subsequent job submissions.
+
+**Request**
+
+<ParamField body="file" type="file" required>
+  The file to upload. Send as a `multipart/form-data` field named `file`.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST http://localhost:9090/api/upload \
+  -F "file=@interview.mp3"
+```
+</CodeGroup>
+
+**Response**
+
+```json
+{
+  "filename": "interview.mp3",
+  "path": "/home/user/.local/share/bonfyre/uploads/interview.mp3",
+  "size": 1234567
+}
+```
+
+<ResponseField name="filename" type="string">
+  The original filename of the uploaded file.
+</ResponseField>
+
+<ResponseField name="path" type="string">
+  Absolute path where the file was written on the server. Pass this value in `args` when submitting a job.
+</ResponseField>
+
+<ResponseField name="size" type="integer">
+  Size of the uploaded file in bytes.
+</ResponseField>
+
+---
+
+## POST /api/jobs
+
+Submits a background job that runs a named binary with the arguments you supply. The binary executes asynchronously; poll `GET /api/jobs/:id` to track its progress and retrieve its output.
+
+**Request body**
+
+<ParamField body="binary" type="string" required>
+  Name of the `bonfyre-*` binary to run (e.g. `"bonfyre-ingest"`). Must be present in the list returned by `GET /api/status`.
+</ParamField>
+
+<ParamField body="args" type="string[]" required>
+  Array of command-line arguments passed to the binary (e.g. `["--file", "interview.mp3"]`).
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl -X POST http://localhost:9090/api/jobs \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer bfy_abc123..." \
+  -d '{"binary": "bonfyre-ingest", "args": ["--file", "interview.mp3"]}'
+```
+</CodeGroup>
+
+**Response**
+
+```json
+{
+  "id": 1,
+  "binary": "bonfyre-ingest",
+  "status": "running"
+}
+```
+
+<ResponseField name="id" type="integer">
+  Unique job ID. Use this with `GET /api/jobs/:id` to poll for results.
+</ResponseField>
+
+<ResponseField name="binary" type="string">
+  The binary name the job was submitted against, as provided in the request.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Initial job status. Always `"running"` immediately after submission.
+</ResponseField>
+
+---
+
+## GET /api/jobs
+
+Returns the list of all jobs ever submitted to this server instance, ordered by creation time. Use this to build a dashboard view or to scan for failed jobs.
+
+<CodeGroup>
+```bash curl
+curl http://localhost:9090/api/jobs \
+  -H "Authorization: Bearer bfy_abc123..."
+```
+</CodeGroup>
+
+**Response**
+
+```json
+[
+  {
+    "id": 1,
+    "binary": "bonfyre-ingest",
+    "status": "completed",
+    "created_at": 1712345678
+  },
+  {
+    "id": 2,
+    "binary": "bonfyre-transcribe",
+    "status": "running",
+    "created_at": 1712345700
+  }
+]
+```
+
+<ResponseField name="id" type="integer">
+  Unique job ID.
+</ResponseField>
+
+<ResponseField name="binary" type="string">
+  Name of the binary that was run for this job.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current job status. One of `"running"`, `"completed"`, or `"failed"`.
+</ResponseField>
+
+<ResponseField name="created_at" type="integer">
+  Unix timestamp (seconds) when the job was submitted.
+</ResponseField>
+
+---
+
+## GET /api/jobs/:id
+
+Returns full detail for a single job including its captured stdout output. Poll this endpoint after submitting a job until `status` is `"completed"` or `"failed"`.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  The job ID returned by `POST /api/jobs`.
+</ParamField>
+
+<CodeGroup>
+```bash curl
+curl http://localhost:9090/api/jobs/1 \
+  -H "Authorization: Bearer bfy_abc123..."
+```
+</CodeGroup>
+
+**Response**
+
+```json
+{
+  "id": 1,
+  "binary": "bonfyre-ingest",
+  "status": "completed",
+  "output": "Ingested interview.mp3 → artifact a3f9c1...",
+  "created_at": 1712345678
+}
+```
+
+<ResponseField name="id" type="integer">
+  Unique job ID.
+</ResponseField>
+
+<ResponseField name="binary" type="string">
+  Name of the binary that was run.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Terminal or current status: `"running"`, `"completed"`, or `"failed"`.
+</ResponseField>
+
+<ResponseField name="output" type="string">
+  Captured stdout from the binary. Empty string while the job is still running. Contains error output if status is `"failed"`.
+</ResponseField>
+
+<ResponseField name="created_at" type="integer">
+  Unix timestamp (seconds) when the job was submitted.
+</ResponseField>
+
+---
+
+## ANY /api/binaries/:name/*
+
+Forwards any HTTP request directly to the named `bonfyre-*` binary via fork/exec. The request body is piped to the binary's stdin and the binary's stdout becomes the HTTP response body. The HTTP method, sub-path, and query string are all available to the binary as arguments or environment variables.
+
+This is the most flexible route in the API. Any binary that accepts input on stdin and writes results to stdout is immediately available over HTTP with no additional configuration.
+
+**Path parameters**
+
+<ParamField path="name" type="string" required>
+  Name of the binary to invoke (e.g. `bonfyre-meter`, `bonfyre-auth`). The server prepends `bonfyre-` if not already present.
+</ParamField>
+
+<ParamField path="*" type="string">
+  Sub-path forwarded to the binary as a positional argument (e.g. `status`, `login`, `report`).
+</ParamField>
+
+<Warning>
+  Only binaries listed in `GET /api/status` under `binaries` can be invoked through this route. Attempting to call an unknown binary returns a 404.
+</Warning>
+
+<CodeGroup>
+```bash GET example — meter status
+curl http://localhost:9090/api/binaries/bonfyre-meter/status \
+  -H "Authorization: Bearer bfy_abc123..."
+```
+
+```bash POST example — auth login
+curl -X POST http://localhost:9090/api/binaries/bonfyre-auth/login \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer bfy_abc123..." \
+  -d '{"email": "user@example.com", "password": "yourpassword"}'
+```
+
+```bash GET example — finance report
+curl http://localhost:9090/api/binaries/bonfyre-finance/report \
+  -H "Authorization: Bearer bfy_abc123..."
+```
+</CodeGroup>
+
+**Response**
+
+The response body is whatever the binary writes to stdout. The content type defaults to `application/json` but may differ depending on the binary's output.
+
+<Tip>
+  You can reach any binary in the [full binary list](/reference/api-overview#endpoint-surface) through this proxy route without deploying any new server code.
+</Tip>

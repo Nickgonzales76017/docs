@@ -1,0 +1,109 @@
+---
+title: "Bonfyre artifacts: the universal data contract explained"
+sidebarTitle: "Artifacts"
+description: "BfArtifact is the universal data contract between all Bonfyre binaries. Every input and output is a typed, hashed, family-grouped artifact manifest."
+---
+
+When you run any Bonfyre binary — whether you're ingesting an audio file, generating a transcript, or packaging a deliverable — the binary reads and writes a `BfArtifact` manifest. This is the single data contract that every binary in the system speaks. Understanding artifacts means you can inspect the output of any step, trace data through a pipeline, and reason about storage and compression.
+
+## The BfArtifact struct
+
+Every artifact is described by the following fields. These fields appear in every manifest, whether it's a raw audio file, a finished transcript, or a billing offer.
+
+```c
+typedef struct {
+    char artifact_id[512];     // content-addressed (SHA-256 of canonical form)
+    char artifact_type[128];   // "transcript", "brief", "proof", "offer", etc.
+    char source_system[128];   // originating binary
+    char created_at[128];      // ISO-8601 UTC
+    char root_hash[128];       // SHA-256 of content
+    char family_key[17];       // FNV-1a-64: groups structurally equivalent artifacts
+    char canonical_key[17];    // FNV-1a-64: distinguishes signatures within a family
+    int  atoms_count;          // sub-objects
+    int  operators_count;      // transform nodes
+    int  realizations_count;   // materialized outputs
+    int  component_total;      // atoms + operators + realizations
+} BfArtifact;
+```
+
+### What the fields mean in plain English
+
+<CardGroup cols={2}>
+  <Card title="artifact_id" icon="fingerprint">
+    A SHA-256 hash of the artifact's canonical form. Two artifacts with identical content will always have the same `artifact_id`, regardless of when or where they were created. This is how Bonfyre deduplicates work in pipelines.
+  </Card>
+  <Card title="artifact_type" icon="tag">
+    A human-readable label for what this artifact is: `"transcript"`, `"brief"`, `"proof"`, `"offer"`, and so on. The type determines which binaries can consume it and how it gets indexed.
+  </Card>
+  <Card title="family_key" icon="layer-group">
+    A compact 16-character hash that groups all artifacts of the same type from the same source system. Artifacts in the same family share structural shape, which is what makes compression and O(1) field access possible.
+  </Card>
+  <Card title="canonical_key" icon="key">
+    A finer-grained hash within a family. Where `family_key` groups by type and source, `canonical_key` distinguishes by the artifact's exact structure (atom count, operator count, realization count). Two artifacts can share a family but have different canonical keys.
+  </Card>
+</CardGroup>
+
+<Note>
+  The `root_hash` is a SHA-256 of the artifact's content, while `artifact_id` is a SHA-256 of its canonical serialized form. In practice you will use `artifact_id` to refer to a specific artifact and `root_hash` to verify its content hasn't changed.
+</Note>
+
+## The artifact lifecycle
+
+Every piece of data in Bonfyre follows the same path from raw input to finished output.
+
+<Steps>
+  <Step title="Ingest">
+    `bonfyre-ingest` accepts your source file, detects its type, normalizes it, and stamps a `BfArtifact` manifest. This is the moment the file enters the Bonfyre system. Every subsequent step works with artifacts, never raw files.
+  </Step>
+  <Step title="Transform chain">
+    Pure operator binaries (TRANSFORM layer) read the incoming `BfArtifact`, do their work, and produce a new `BfArtifact`. Each step adds to the chain: `media-prep` → `transcribe` → `transcript-clean` → `paragraph` → `brief` → `proof`. Because Transform binaries are pure, the whole chain is cacheable.
+  </Step>
+  <Step title="Index">
+    `bonfyre-index` registers the artifact in SQLite and groups it by `family_key`. Indexing is what makes artifacts queryable and what enables family-level compression later.
+  </Step>
+  <Step title="Realize">
+    Realization is the step that produces a deliverable output for a human or external system. `bonfyre-pack` creates a ZIP. `bonfyre-emit` produces HTML, PDF, or EPUB. `bonfyre-narrate` generates audio. Realizations are created on demand — they are not stored as artifacts themselves.
+  </Step>
+</Steps>
+
+<Tip>
+  Transforms produce artifacts; realizations produce outputs. If you want to inspect the intermediate data at any stage, you're looking at an artifact. If you want a file a human can open, you need a realization.
+</Tip>
+
+## Artifact families
+
+Artifacts that share the same `artifact_type` and `source_system` belong to the same **family**. Families are how Bonfyre achieves efficient compression and fast lookups across large collections of similar records.
+
+```
+family_key    = FNV-1a-64(normalize(type) + "|" + normalize(system))
+canonical_key = FNV-1a-64(type + "|" + system + "|" + atom_count + "|" + op_count + "|" + real_count)
+```
+
+For example, every transcript produced by `bonfyre-transcribe` shares the same `family_key`. Because they are structurally similar — same fields, similar value distributions — `liblambda-tensors` can compress a family of 10,000 such artifacts down to **13.5% of their raw JSON size** while still supporting O(1) per-field reads without decompressing the whole collection.
+
+<Tabs>
+  <Tab title="Why families matter">
+    When you query artifacts, you're often asking "give me all transcripts from this session" or "show me all offers for this user." Families make those queries fast because they are the natural unit of indexing, compression, and caching. The `family_key` is a single 16-character value you can use in a SQLite `WHERE` clause to scope any query to a family instantly.
+  </Tab>
+  <Tab title="Lambda Tensors compression">
+    `liblambda-tensors` exploits structural similarity within families using five encoding tiers — from basic varint packing up to arithmetic coding with family-aware Huffman trees. The key property is that compression does not sacrifice random access: you can read a single field from record 3,000 without decompressing anything else.
+
+    ```c
+    LT_Family *fam = lt_family_create();
+    lt_family_add(fam, json_record_1, len_1);
+    lt_family_add(fam, json_record_2, len_2);
+    lt_family_finalize(fam);
+
+    // Read one field from record 3,000 — O(1), no full decompress
+    const char *val = lt_family_read_field(fam, 3000, field_idx);
+    ```
+  </Tab>
+</Tabs>
+
+## Why outputs look the way they do
+
+When you run a pipeline and inspect the output directory, every file is traceable back to an artifact manifest. The file name is derived from `artifact_id`, the content matches `root_hash`, and the directory structure reflects the artifact's type and family. This is intentional: it means you can always tell what produced a file, what content is inside it, and where it fits in the larger family of similar outputs — without opening the file itself.
+
+<Info>
+  Because `artifact_id` is content-addressed, you can safely deduplicate artifacts across runs. If you process the same audio file twice, `bonfyre-pipeline` detects the matching `artifact_id` at the ingest step and skips redundant work downstream.
+</Info>

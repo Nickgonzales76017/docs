@@ -1,0 +1,148 @@
+---
+title: "Bonfyre storage layout and data paths"
+sidebarTitle: "Storage"
+description: "Learn where Bonfyre stores its SQLite databases and files, how to customize data paths per binary, and how to back up and restore your data."
+---
+
+Bonfyre stores all of its persistent state in two locations: a home directory folder for user-facing databases and uploads, and a repo-local directory for operating state. Both use SQLite, which means each database is a single self-contained file you can copy, inspect, or back up without any special tooling.
+
+## Default storage location
+
+All user-facing data lives under `~/.local/share/bonfyre/` by default:
+
+```
+~/.local/share/bonfyre/
+├── cms.db        # CMS schemas, content, tokens
+├── jobs.db       # API job tracking
+├── meter.db      # Usage metering
+├── index.db      # Artifact index
+├── catalog.db    # Workflow, recipe, family, model browsing surfaces
+├── uploads/      # Uploaded files (via bonfyre-api)
+└── artifacts/    # Pipeline outputs
+```
+
+## What each file contains
+
+| File | Binary that owns it | Contents |
+|---|---|---|
+| `cms.db` | `bonfyre-cms` | CMS schemas, content records, auth tokens |
+| `jobs.db` | `bonfyre-api` | Job submissions, status, and results |
+| `meter.db` | `bonfyre-meter` | Per-operation usage records and billing state |
+| `index.db` | `bonfyre-index` | Artifact index with full-text search |
+| `catalog.db` | CLI surfaces | Workflow, recipe, family, and model browsing |
+| `uploads/` | `bonfyre-api` | Files uploaded via the HTTP API |
+| `artifacts/` | `bonfyre-pipeline` | Pipeline output files |
+
+## layeros/state
+
+The second state surface is `layeros/state`, located inside your Bonfyre repo directory. This is the larger operating state for LayerArtifact, graph, queue, and wire workflows:
+
+```
+layeros/state/
+├── layers.db     # LayerArtifact state
+├── index.db      # Layer index projection
+├── graph.db      # Merkle-DAG artifact graph
+└── queue.db      # Persistent job queue
+```
+
+<Note>
+`layeros/state` and `~/.local/share/bonfyre/` are related but not the same inventory. Commands that work with the layer surface use `--root layeros/state`. Commands that browse workflows, recipes, and families use `catalog.db` from the home directory.
+</Note>
+
+## Two catalog surfaces explained
+
+<Tabs>
+  <Tab title="layeros/state">
+    Use this with `bonfyre-index`, `bonfyre layer registry`, `bonfyre status registries`, and `bonfyre-wire`. Pass it explicitly with the `--root` flag:
+
+    ```bash
+    bonfyre-index layers --root layeros/state
+    bonfyre layer registry --root layeros/state
+    bonfyre status registries --root layeros/state
+    ```
+
+    This surface contains the larger artifact and operator graph used by the runtime. It needs to be refreshed after pulling new code.
+  </Tab>
+  <Tab title="~/.local/share/bonfyre/catalog.db">
+    This is populated automatically by the browsing surfaces:
+
+    ```bash
+    bonfyre workflow list
+    bonfyre recipe list
+    ```
+
+    It is a smaller, read-oriented catalog that powers the CLI browsing commands. You do not interact with it directly — the CLI manages it.
+  </Tab>
+</Tabs>
+
+## Customizing paths
+
+Both `bonfyre-cms` and `bonfyre-api` accept flags to override their default database and data directory locations:
+
+<CodeGroup>
+```bash bonfyre-cms
+# Use a custom database file
+bonfyre-cms serve --db /data/myproject/cms.db --port 8800
+
+# Use a custom data directory
+bonfyre-cms serve --data /data/myproject/ --port 8800
+```
+
+```bash bonfyre-api
+# Use a custom database file
+bonfyre-api --db /data/myproject/jobs.db --port 9090 serve
+
+# Use a custom data directory
+bonfyre-api --data /data/myproject/ --port 9090 serve
+```
+</CodeGroup>
+
+| Flag | Applies to | What it overrides |
+|---|---|---|
+| `--db FILE` | `bonfyre-cms`, `bonfyre-api` | The SQLite database file path |
+| `--data DIR` | `bonfyre-cms`, `bonfyre-api` | The uploads and artifacts directory |
+
+## Backup strategy
+
+Because all state is stored in SQLite files, backing up Bonfyre is straightforward:
+
+<Steps>
+  <Step title="Stop writes (optional but recommended)">
+    If you want a perfectly consistent snapshot, stop the services or quiesce writes before copying. For most use cases, copying the files while they are not under heavy write load is sufficient — SQLite is crash-safe.
+  </Step>
+  <Step title="Copy the home directory folder">
+    ```bash
+    cp -r ~/.local/share/bonfyre/ /your/backup/location/bonfyre-$(date +%Y%m%d)/
+    ```
+
+    This captures all databases, uploads, and pipeline artifacts in one command.
+  </Step>
+  <Step title="Copy layeros/state if needed">
+    If you also want to back up the operating state:
+
+    ```bash
+    cp -r layeros/state/ /your/backup/location/layeros-state-$(date +%Y%m%d)/
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+To restore, copy the backup folder back to the original location. No special migration or import step is required — the binaries open the SQLite files directly on startup.
+</Tip>
+
+<Warning>
+Do not copy SQLite files while a heavy write operation is in progress (e.g., during a large pipeline run). Wait for the operation to complete, or use SQLite's built-in `.backup` command for a hot backup without stopping the service.
+</Warning>
+
+## Which binary uses which database
+
+| Binary | Database |
+|---|---|
+| `bonfyre-cms` | `~/.local/share/bonfyre/cms.db` |
+| `bonfyre-api` | `~/.local/share/bonfyre/jobs.db` |
+| `bonfyre-meter` | `~/.local/share/bonfyre/meter.db` |
+| `bonfyre-index` | `~/.local/share/bonfyre/index.db` and `layeros/state/index.db` |
+| `bonfyre-graph` | `layeros/state/graph.db` |
+| `bonfyre-queue` | `layeros/state/queue.db` |
+| `bonfyre-orchestrate` | Internal SQLite policy store (managed automatically) |
+| CLI browsing surfaces | `~/.local/share/bonfyre/catalog.db` |

@@ -1,0 +1,163 @@
+---
+title: "Transcribe and summarize audio locally"
+sidebarTitle: "Audio Pipeline"
+description: "Run a complete audio-to-deliverable pipeline on your own machine — transcript, summary, quality score, and ZIP package, with no cloud APIs."
+---
+
+Bonfyre's audio pipeline converts a raw audio file into a finished deliverable: a cleaned transcript, an executive summary, a quality score, a pricing proposal, and a ZIP package. Everything runs locally on your machine using Whisper with HCP v3.2 enhancement — no OpenAI key, no Deepgram account, no per-minute billing.
+
+## Quick path: one command
+
+If you want the full pipeline in a single step, run:
+
+```bash
+bonfyre-pipeline run --input interview.mp3 --out ./output
+```
+
+This executes all 10 stages in-process in **5–8 ms** (after transcription, which scales with audio length). The `./output` directory will contain your transcript, summary, action items, quality score, and a ZIP deliverable.
+
+## Step-by-step path
+
+When you need more control — to inspect intermediate files, swap in a custom step, or debug a specific stage — you can run each stage individually.
+
+<Steps>
+  <Step title="Ingest">
+    Validate the file, create a manifest, and copy it to a working directory.
+
+    ```bash
+    bonfyre-ingest intake interview.mp3 --out ./work/
+    ```
+  </Step>
+
+  <Step title="Normalize">
+    Convert to 16 kHz mono WAV, apply denoising, and chunk if the file is long.
+
+    ```bash
+    bonfyre-media-prep normalize ./work/interview.mp3
+    ```
+  </Step>
+
+  <Step title="Hash">
+    Produce a SHA-256 content address for deduplication and integrity checking.
+
+    ```bash
+    bonfyre-hash ./work/interview.wav
+    ```
+  </Step>
+
+  <Step title="Transcribe">
+    Run speech-to-text using Whisper locally — no external API calls.
+
+    ```bash
+    bonfyre-transcribe run ./work/interview.wav --out transcript.json
+    ```
+  </Step>
+
+  <Step title="Clean">
+    Remove filler words ("um", "uh"), detect and strip hallucinations, and normalize punctuation.
+
+    ```bash
+    bonfyre-transcript-clean transcript.json --out clean.json
+    ```
+  </Step>
+
+  <Step title="Paragraph">
+    Structure the cleaned text into readable paragraphs with sentence boundary detection.
+
+    ```bash
+    bonfyre-paragraph clean.json --out paragraphed.json
+    ```
+  </Step>
+
+  <Step title="Brief">
+    Extract an executive summary and action items from the paragraphed transcript.
+
+    ```bash
+    bonfyre-brief generate paragraphed.json --out brief.md
+    ```
+  </Step>
+
+  <Step title="Proof">
+    Score the transcript for length, filler ratio, hallucination probability, and confidence.
+
+    ```bash
+    bonfyre-proof score paragraphed.json
+    ```
+  </Step>
+
+  <Step title="Offer">
+    Generate a pricing proposal based on content quality and your chosen tier.
+
+    ```bash
+    bonfyre-offer generate --input brief.md --tier standard
+    ```
+  </Step>
+
+  <Step title="Pack">
+    Bundle the transcript, summary, quality score, and proposal into a ZIP with a manifest.
+
+    ```bash
+    bonfyre-pack bundle ./work/ --out deliverable.zip
+    ```
+  </Step>
+</Steps>
+
+## Composing with pipes
+
+Because every Bonfyre binary reads and writes JSON, you can compose stages directly with Unix pipes. This avoids writing intermediate files to disk and is useful for lightweight or experimental pipelines:
+
+```bash
+bonfyre-ingest intake interview.mp3 | \
+  bonfyre-transcribe run --stdin | \
+  bonfyre-transcript-clean --stdin | \
+  bonfyre-paragraph --stdin | \
+  bonfyre-brief generate --stdin
+```
+
+You can also insert your own custom binary anywhere in the chain — any program that reads JSON from stdin and writes JSON to stdout will work.
+
+## Transcription quality: Deepgram vs. Whisper API vs. Bonfyre + HCP
+
+HCP v3.2 is Bonfyre's post-processing layer on top of Whisper. It applies quad-channel spectral refinement (acoustic, morphological, bigram, and trigram semantic channels), a unified FFT pass that cuts audio analysis overhead by 86%, formant anchoring, morphological logit bias as an active decoder constraint, and context-seeded constrained re-decode. The result is a 9-layer hallucination detection system that runs in under 18 ms even on 720-second audio files.
+
+| | Deepgram | OpenAI Whisper API | Bonfyre + HCP v3.2 |
+|---|---|---|---|
+| Cost | $0.006/min | $0.006/min | **$0/min** |
+| Quality (base model) | ~0.85–0.90 | ~0.87 | **0.999** |
+| Quality (tiny model) | — | — | **0.997** |
+| Hallucination detection | None | None | **9-layer + morphological logit bias** |
+| Post-processing overhead | N/A | N/A | **&lt;18 ms on 720 s audio** |
+| Privacy | Cloud | Cloud | **100% local** |
+
+<Note>
+  Tiny + HCP v3.2 reaches 0.997 — within 0.1% of base quality — at roughly 5× faster decode speed. For most use cases, tiny is the better default.
+</Note>
+
+## Monitoring pipeline jobs
+
+You can submit and track pipeline jobs through the HTTP API by running `bonfyre-api` alongside your pipeline:
+
+```bash
+# Start the API gateway
+bonfyre-api --port 9090 serve
+
+# Submit a job
+curl -X POST http://localhost:9090/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"binary": "bonfyre-pipeline", "args": ["run", "--input", "interview.mp3"]}'
+
+# Check job status
+curl http://localhost:9090/api/jobs/1
+```
+
+## Usage metering
+
+Every pipeline run is tracked automatically. To see per-operation costs, total usage, and a billing summary:
+
+```bash
+bonfyre-meter report
+```
+
+<Tip>
+  Pair `bonfyre-meter report` with `bonfyre-gate` tier enforcement to build usage-based billing into your own product — see the [SaaS Backend guide](/guides/saas-backend).
+</Tip>

@@ -1,0 +1,122 @@
+---
+title: "Bonfyre's 48 binaries explained"
+sidebarTitle: "Binaries"
+description: "A catalog of all 48 Bonfyre binaries organized by what they do. Each binary is under 70 KB, starts in under 50 ms, and does exactly one job."
+---
+
+Bonfyre ships 48 static binaries and one embeddable C library. Every binary is under 70 KB, starts in under 50 ms, and requires no runtime beyond libc. You do not need to use all of them — pick the binaries that match your use case and ignore the rest. This page is a high-level catalog organized by category. Follow the links in each section for detailed usage guides.
+
+## Infrastructure
+
+These binaries form the foundation of any Bonfyre deployment. They handle HTTP serving, content management, authentication, artifact indexing, and runtime coordination. If you are building a backend service, you will likely use several of these.
+
+| Binary | Size | What you can do with it |
+|---|---|---|
+| `bonfyre-cms` | 299 KB | Run a lightweight content management system with dynamic schemas, token auth, and Lambda Tensors compression — no Node.js required |
+| `bonfyre-api` | 69 KB | Expose an HTTP gateway with file upload, job management, and static file serving |
+| `bonfyre-auth` | 35 KB | Manage user signup, login, and session tokens with SHA-256 password hashing |
+| `bonfyre-proxy` | 53 KB | Drop in an OpenAI-compatible shim that routes `/v1/audio/transcriptions` and `/v1/chat/completions` to local Bonfyre binaries |
+| `bonfyre-index` | 68 KB | Index and full-text search all your artifacts in a local SQLite database |
+| `bonfyre-graph` | 51 KB | Build and query a Merkle-DAG artifact graph with SHA-256 content addressing |
+| `bonfyre-runtime` | 33 KB | Manage runtime environment and process lifecycle |
+| `bonfyre-hash` | 34 KB | Compute SHA-256 content addresses for any file (FIPS 180-4, pure C) |
+| `bonfyre-tel` | 68 KB | Run a communications edge node with SIP control and native WebTransport/MoQ relay |
+
+<Note>
+  `bonfyre-cms` is larger than the other infrastructure binaries because it embeds Lambda Tensors compression directly. All other infrastructure binaries are under 70 KB.
+</Note>
+
+## Orchestration
+
+These binaries coordinate how work flows between other binaries. Use them when you need to run multi-step workflows, queue jobs for later, replicate state across instances, or let an AI model suggest pipeline improvements.
+
+| Binary | Size | What you can do with it |
+|---|---|---|
+| `bonfyre-pipeline` | 51 KB | Run the full 10-step audio-to-deliverable pipeline in a single in-process call (5–8 ms) |
+| `bonfyre-orchestrate` | 45 KB | Plan and execute multi-binary workflows, with optional Gemma 4 assist for pipeline selection |
+| `bonfyre-cli` | 33 KB | Dispatch commands to any installed Bonfyre binary through a unified interface |
+| `bonfyre-queue` | 33 KB | Persist jobs in SQLite and process them asynchronously |
+| `bonfyre-sync` | 33 KB | Replicate artifact state across Bonfyre instances |
+| `bonfyre-stitch` | 33 KB | Materialize DAG recipes into executable pipelines and assemble their results |
+
+<Tip>
+  `bonfyre-orchestrate` is a strict machine-only planner. It never exposes prompts to end users and always maintains deterministic behavior as its baseline. The Gemma 4 integration is additive — it can suggest extra steps that improve quality, but it does not replace the fast path.
+</Tip>
+
+## Audio pipeline
+
+These binaries cover the full journey from raw audio to finished, distributable content. You can chain them manually with pipes and files, or run them all at once through `bonfyre-pipeline`. They also include general-purpose tools for text embedding, vector search, content tagging, and multi-format publishing.
+
+| Binary | Size | What you can do with it |
+|---|---|---|
+| `bonfyre-ingest` | 33 KB | Intake files, detect their type, and generate a `BfArtifact` manifest |
+| `bonfyre-media-prep` | 34 KB | Normalize audio to 16 kHz mono and reduce noise |
+| `bonfyre-transcribe` | 34 KB | Convert speech to text using local Whisper with HCP v3.2 quality enhancement |
+| `bonfyre-transcript-family` | 34 KB | Run the full intake-to-transcription chain as a single step |
+| `bonfyre-transcript-clean` | 34 KB | Remove filler words, hallucinations, and transcription artifacts |
+| `bonfyre-paragraph` | 34 KB | Structure a cleaned transcript into logical paragraphs |
+| `bonfyre-brief` | 34 KB | Extract a summary and action items from structured text |
+| `bonfyre-narrate` | 68 KB | Generate verified TTS audio with inline FFT fidelity scoring and closed-loop verification |
+| `bonfyre-proof` | 34 KB | Score output quality and flag issues for review |
+| `bonfyre-pack` | 33 KB | Package transcript, summary, quality score, and pricing proposal into a ZIP deliverable |
+| `bonfyre-compress` | 33 KB | Compress files with zstd asynchronously |
+| `bonfyre-embed` | 34 KB | Generate text embeddings using the ONNX Runtime C API with trie-based tokenization and batch mode |
+| `bonfyre-vec` | 34 KB | Run local vector search using sqlite-vec with SIMD cosine similarity and exact brute-force mode |
+| `bonfyre-segment` | 33 KB | Separate audio by speaker |
+| `bonfyre-speechloop` | 33 KB | Process live speech in real time |
+| `bonfyre-clips` | 33 KB | Extract specific audio segments from a longer recording |
+| `bonfyre-tone` | 33 KB | Analyze tone and sentiment using openSMILE |
+| `bonfyre-tag` | 33 KB | Assign topic tags using a local fastText model (pure C inference, no Python) |
+| `bonfyre-canon` | 34 KB | Normalize artifacts to canonical format using tree-sitter |
+| `bonfyre-query` | 33 KB | Query and filter your artifact collection |
+| `bonfyre-repurpose` | 33 KB | Transform content into new formats for different audiences or platforms |
+| `bonfyre-emit` | 33 KB | Export artifacts to HTML, PDF, EPUB, or RSS via pandoc |
+| `bonfyre-render` | 33 KB | Render templates against artifact data |
+| `bonfyre-distribute` | 33 KB | Send finished content by email, Slack, or webhook |
+| `bonfyre-project` | 33 KB | Scaffold new Bonfyre project structures |
+| `bonfyre-mfa-dict` | 34 KB | Manage MFA pronunciation dictionaries for transcription quality |
+| `bonfyre-weaviate-index` | 34 KB | Index artifacts in a Weaviate instance for semantic search |
+
+## Monetization
+
+These binaries handle everything related to pricing, access control, metering, and billing. They run in a separate privilege boundary from the rest of the system. If you are building a SaaS product on Bonfyre, you will combine these with the Infrastructure and Orchestration binaries.
+
+| Binary | Size | What you can do with it |
+|---|---|---|
+| `bonfyre-offer` | 33 KB | Generate dynamic pricing proposals based on artifact content and user tier |
+| `bonfyre-gate` | 33 KB | Validate API keys and enforce Free/Pro/Enterprise tier limits |
+| `bonfyre-meter` | 34 KB | Track per-operation usage for billing and reporting |
+| `bonfyre-ledger` | 33 KB | Maintain an append-only record of all financial transactions |
+| `bonfyre-finance` | 51 KB | Handle service arbitrage and bundle pricing across multiple offerings |
+| `bonfyre-outreach` | 34 KB | Track outreach activity and route follow-up actions |
+| `bonfyre-pay` | 35 KB | Generate invoices, process payments, and manage credits |
+
+## Library
+
+`liblambda-tensors` is not a binary — it is an embeddable C library you can link directly into your own application. It provides structural compression for collections of similar JSON records, with O(1) per-field random access on compressed data. Think of it like SQLite but for structured compression.
+
+| Name | Size | What you can do with it |
+|---|---|---|
+| `liblambda-tensors` | 41 KB | Embed structural JSON compression into any C application (static `.a` + shared `.so`, MIT licensed) |
+
+```bash
+# Build and install the library
+cd lib/liblambda-tensors
+make
+make install PREFIX=/usr/local
+
+# Link it into your own project
+cc -o myapp myapp.c -llambda-tensors -lm
+```
+
+<Info>
+  `liblambda-tensors` achieves 13.5% of raw JSON size at N=10,000 records using family-aware Huffman encoding, while still supporting O(1) reads on individual fields without decompressing the entire collection. See the [Lambda Tensors guide](/guides/compression) for a full walkthrough.
+</Info>
+
+## All 48 binaries at a glance
+
+The total install size for all 48 binaries is approximately **2.1 MB**. Every binary except `bonfyre-narrate` (TTS) and `bonfyre-embed` (ONNX inference) depends only on libc. Optional runtime dependencies — Whisper models, Piper TTS, ONNX runtime, pandoc, Weaviate — are only required if you use the specific binaries that call them.
+
+<Warning>
+  `bonfyre-transcribe`, `bonfyre-narrate`, `bonfyre-embed`, and `bonfyre-weaviate-index` each require an external runtime at execution time (Whisper model, Piper TTS, ONNX runtime, and a running Weaviate instance respectively). All other binaries run with no external dependencies.
+</Warning>

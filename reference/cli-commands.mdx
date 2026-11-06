@@ -1,0 +1,228 @@
+---
+title: "bonfyre CLI reference: wire, stitch, and registry commands"
+sidebarTitle: "CLI Commands"
+description: "Reference for the bonfyre CLI dispatcher: registry health, wire ingestion, artifact materialization, stitch planning, and all subcommands with their flags."
+---
+
+The `bonfyre` CLI is a unified command dispatcher (`bonfyre-cli`) that routes subcommands to the appropriate binary. Rather than invoking `bonfyre-wire`, `bonfyre-stitch`, and others directly, you can use `bonfyre <command>` as a single entry point across the entire system. The CLI also provides health checking, registry inspection, and drift detection — essential after pulling new code or rebuilding binaries.
+
+The top-level syntax is:
+
+```bash
+bonfyre <command> [subcommand] [flags]
+```
+
+If the CLI looks stale after updating code, rerun the registry population commands to sync the new binaries into the CLI surface.
+
+## Registry and health commands
+
+These commands let you inspect and verify the state of your Bonfyre installation, the operator registry, and the catalog surfaces.
+
+<AccordionGroup>
+  <Accordion title="bonfyre list --health">
+    Lists all registered binaries along with their health status labels. Run this to confirm that binaries are accessible and registered correctly after a build or install.
+
+    ```bash
+    bonfyre list --health
+    ```
+
+    **Expected output:** A table of binary names and status labels (`ok`, `missing`, `stale`, etc.). All entries should show `ok` after a clean `make` and registry sync.
+
+    <Tip>
+    Run this immediately after `make` to catch any binaries that failed to build or were not registered.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="bonfyre doctor sync-subcommands">
+    Syncs repo-built subcommands into the CLI surface. Run this once after a fresh clone, and again whenever `cmd/`, `lib/`, or CLI/catalog-related code changes land.
+
+    ```bash
+    bonfyre doctor sync-subcommands
+    ```
+
+    **What it does:** Walks the repo's built binaries and registers them as subcommands in the CLI dispatcher. Without this step, newly built binaries are not reachable via `bonfyre <command>`.
+  </Accordion>
+
+  <Accordion title="bonfyre status registries">
+    Checks registry density — how many operators, workflows, and recipes are registered under the given state root.
+
+    ```bash
+    bonfyre status registries --root layeros/state
+    ```
+
+    | Flag | Description |
+    |---|---|
+    | `--root <path>` | Path to the LayerOS state directory (e.g., `layeros/state`) |
+
+    **Expected output:** Counts of registered items per registry surface. Low counts indicate the population commands have not been run yet.
+  </Accordion>
+
+  <Accordion title="bonfyre workflow list">
+    Lists all available workflows registered in the catalog.
+
+    ```bash
+    bonfyre workflow list
+    ```
+
+    **Expected output:** A list of named workflows you can reference in recipes and pipeline plans.
+  </Accordion>
+
+  <Accordion title="bonfyre recipe list">
+    Lists all available recipes registered in the catalog.
+
+    ```bash
+    bonfyre recipe list
+    ```
+
+    **Expected output:** A list of named recipes you can inspect, save, and replay.
+  </Accordion>
+
+  <Accordion title="bonfyre layer registry">
+    Lists all layers registered in the layer registry under the given state root.
+
+    ```bash
+    bonfyre layer registry --root layeros/state
+    ```
+
+    | Flag | Description |
+    |---|---|
+    | `--root <path>` | Path to the LayerOS state directory |
+
+    **Expected output:** A list of layer names and their registration status in the registry.
+  </Accordion>
+</AccordionGroup>
+
+## Wire subcommands
+
+`bonfyre wire` is the front door for the observe → classify → materialize → route pipeline. It ingests PCAP capture files (or synthetic captures), fingerprints devices, materializes canonical `BfArtifact` objects, and generates stitch-ready recipes.
+
+<AccordionGroup>
+  <Accordion title="bonfyre wire ingest-pcap">
+    Ingests a PCAP capture file and writes it into the LayerOS state store. This is always the first step in the wire pipeline.
+
+    ```bash
+    bonfyre wire ingest-pcap <file> --dumb-device --root layeros/state
+    ```
+
+    | Flag | Description |
+    |---|---|
+    | `<file>` | Path to the `.pcap` capture file |
+    | `--dumb-device` | Treats the capture source as a generic (non-smart) device — skips protocol-specific fingerprinting heuristics |
+    | `--root <path>` | Path to the LayerOS state directory |
+
+    **Expected output:** A `capture_id` string that you pass to subsequent `wire` subcommands.
+  </Accordion>
+
+  <Accordion title="bonfyre wire probe">
+    Fingerprints the devices and flows in a capture and generates chain suggestions for how to route the data through the Bonfyre operator graph.
+
+    ```bash
+    bonfyre wire probe <capture_id> --root layeros/state
+    ```
+
+    | Flag | Description |
+    |---|---|
+    | `<capture_id>` | The capture ID returned by `ingest-pcap` |
+    | `--root <path>` | Path to the LayerOS state directory |
+
+    **Expected output:** Device fingerprint data and suggested operator chains.
+  </Accordion>
+
+  <Accordion title="bonfyre wire artifacts">
+    Materializes canonical `BfArtifact` JSON files for all flows in the capture. Artifacts are written under `layeros/state/wire/artifacts/<capture_id>/`.
+
+    ```bash
+    bonfyre wire artifacts <capture_id> --root layeros/state
+    ```
+
+    | Flag | Description |
+    |---|---|
+    | `<capture_id>` | The capture ID returned by `ingest-pcap` |
+    | `--root <path>` | Path to the LayerOS state directory |
+
+    **Expected output:** One or more `BfArtifact` JSON files on disk.
+  </Accordion>
+
+  <Accordion title="bonfyre wire recipe">
+    Generates a stitch-compatible pipeline recipe from the capture's artifact set. Redirect the output to a file to save it for inspection and replay.
+
+    ```bash
+    bonfyre wire recipe <capture_id> --root layeros/state > recipe.json
+    ```
+
+    | Flag | Description |
+    |---|---|
+    | `<capture_id>` | The capture ID returned by `ingest-pcap` |
+    | `--root <path>` | Path to the LayerOS state directory |
+
+    **Expected output:** A JSON recipe document on stdout, suitable for passing to `bonfyre stitch plan`.
+  </Accordion>
+
+  <Accordion title="bonfyre wire doctor">
+    Checks the health of the wire subsystem: verifies the binary is reachable, the state directory is valid, and the operator registry entries for wire are present.
+
+    ```bash
+    bonfyre wire doctor
+    ```
+
+    **Expected output:** A health summary for the wire operator surface. Run this first if `wire` commands are failing unexpectedly.
+  </Accordion>
+</AccordionGroup>
+
+## Stitch commands
+
+`bonfyre stitch` materializes and assembles DAG outputs from a recipe. You typically feed it the recipe generated by `bonfyre wire recipe`.
+
+<AccordionGroup>
+  <Accordion title="bonfyre stitch plan">
+    Parses a recipe file, validates the DAG, and prints the planned execution steps before running them. Useful for inspecting what will happen before committing.
+
+    ```bash
+    bonfyre stitch plan recipe.json
+    ```
+
+    | Argument | Description |
+    |---|---|
+    | `recipe.json` | Path to a stitch-compatible recipe file (e.g., output of `bonfyre wire recipe`) |
+
+    **Expected output:** A human-readable plan of the operators that will run and in what order.
+  </Accordion>
+</AccordionGroup>
+
+## Full wire-to-stitch example
+
+This is the canonical end-to-end flow — observe a capture, fingerprint it, materialize artifacts, generate a recipe, and plan the pipeline:
+
+```bash
+# Step 1: ingest the capture file
+bonfyre wire ingest-pcap capture.pcap --dumb-device --root layeros/state
+
+# Step 2: fingerprint devices and get chain suggestions
+bonfyre wire probe <capture_id> --root layeros/state
+
+# Step 3: materialize canonical BfArtifact files
+bonfyre wire artifacts <capture_id> --root layeros/state
+
+# Step 4: generate a stitch-ready recipe
+bonfyre wire recipe <capture_id> --root layeros/state > recipe.json
+
+# Step 5: plan (and run) the assembled pipeline
+bonfyre stitch plan recipe.json
+```
+
+## After pulling new code
+
+When `cmd/`, `lib/`, or the CLI/catalog surfaces change, rebuild and repopulate the command and registry layers so that `bonfyre list`, `bonfyre workflow list`, `bonfyre recipe list`, and `bonfyre layer registry` reflect the current state of the tree.
+
+```bash
+make
+bonfyre doctor sync-subcommands
+bonfyre list --health
+bonfyre workflow list
+bonfyre recipe list
+bonfyre layer registry --root layeros/state
+```
+
+<Note>
+Bonfyre uses two state directories. `layeros/state` holds LayerArtifact, graph, queue, and wire operating state. `~/.local/share/bonfyre/catalog.db` is the smaller catalog used by workflow, recipe, family, and model browsing surfaces. If the CLI looks stale after a rebuild, rerun the registry population commands above.
+</Note>
